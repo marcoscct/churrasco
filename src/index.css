@@ -1,0 +1,24 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --color-bg: #23252e; /* Charcoal 950 */
+    --color-text: #fff7ed; /* Ember 50 */
+  }
+
+  body {
+    @apply bg-charcoal-950 text-ember-50 antialiased selection:bg-ember-500 selection:text-white;
+  }
+}
+
+@layer utilities {
+  .glass-panel {
+    @apply bg-white/5 backdrop-blur-md border border-white/10 shadow-xl;
+  }
+  
+  .text-gradient {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-ember-400 to-red-600;
+  }
+}
