@@ -1,22 +1,78 @@
 import { useState, useEffect } from 'react';
+import { SERVICE_ACCOUNT_CONFIG } from './config/credentials';
 import { Layout } from './components/Layout';
-import { Plus, Users, ShoppingBag, DollarSign, RefreshCw, AlertCircle } from 'lucide-react';
-import type { Product, Participant } from './types';
+import { ParticipantCard } from './components/ParticipantCard';
+import { SettlementMatrix } from './components/SettlementMatrix';
+import { AddProductModal } from './components/AddProductModal';
+import { ManageParticipantsModal } from './components/ManageParticipantsModal';
+import {
+  Plus,
+  Users,
+  ShoppingBag,
+  DollarSign,
+  RefreshCw,
+  AlertCircle,
+  ChevronDown,
+  ChevronUp,
+  MoreVertical,
+  Edit,
+  Trash2
+} from 'lucide-react';
+import { AnimatePresence, motion, Reorder } from 'framer-motion';
+import type { Product, Participant, Transaction, PaymentRecord } from './types';
 import { fetchSpreadsheetData } from './services/sheets';
 
 function App() {
   const [products, setProducts] = useState<Product[]>([]);
   const [participants, setParticipants] = useState<Participant[]>([]);
+  const [settlements, setSettlements] = useState<Transaction[]>([]);
+  const [payments, setPayments] = useState<PaymentRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const loadData = async () => {
+  const [debugInfo, setDebugInfo] = useState<any>(null);
+
+  const [isProductModalOpen, setIsProductModalOpen] = useState(false);
+  const [editingProduct, setEditingProduct] = useState<Product | undefined>(undefined);
+  const [isManageParticipantsOpen, setIsManageParticipantsOpen] = useState(false);
+  const [editingParticipant, setEditingParticipant] = useState<string | undefined>(undefined);
+  const [sheetUrl, setSheetUrl] = useState('');
+
+  const loadData = async (url?: string) => {
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchSpreadsheetData();
+      const targetUrl = url || sheetUrl;
+      const data = await fetchSpreadsheetData(targetUrl);
+
+      // Check for Empty Sheet
+      if (data.isEmpty) {
+        if (products.length > 0 && confirm("A planilha parece estar vazia. Deseja exportar os dados atuais para ela?")) {
+          // Export Logic
+          import('./services/sheets').then(({ initializeSheet }) => {
+            initializeSheet(targetUrl, products, participants, payments)
+              .then(() => {
+                alert("Dados exportados com sucesso!");
+                loadData(targetUrl); // Reload to confirm
+              })
+              .catch(e => {
+                console.error("Erro na exportação", e);
+                setError("Falha ao exportar dados: " + e.message);
+              });
+          });
+          setSheetUrl(targetUrl);
+          return;
+        }
+        // If denied, we load empty? Or keep local?
+        // User might want to start fresh.
+      }
+
       setProducts(data.products);
       setParticipants(data.participants);
+      setSettlements(data.settlements || []);
+      setPayments(data.payments || []);
+      setDebugInfo(data.debugInfo || null);
+      if (url) setSheetUrl(url); // Confirm URL only on success
     } catch (err: any) {
       console.error(err);
       setError(err.message || 'Failed to load data');
@@ -25,9 +81,227 @@ function App() {
     }
   };
 
+  const handleDisconnect = () => {
+    setSheetUrl('');
+    setDebugInfo(null);
+    // Keep local data or clear?
+    // User request: "Desvincular". Usually means keep data but stop syncing.
+    // So we do nothing to products/participants.
+  };
+
   useEffect(() => {
     loadData();
   }, []);
+
+  const handleAddProduct = async (data: { name: string; price: number; payer: string; consumers: string[] }) => {
+    // Optimistic Update
+    const newProduct: Product = {
+      id: 'temp-' + Date.now(),
+      ...data
+    };
+
+    const updatedProducts = [...products, newProduct];
+    setProducts(updatedProducts);
+
+    // Recalculate everything locally
+    import('./services/sheets').then(({ calculateStats, addProductToSheet }) => {
+      // Reconstruct map
+      const pMap = new Map<string, Participant>();
+      participants.forEach(p => pMap.set(p.name, { ...p }));
+
+      const result = calculateStats(updatedProducts, pMap, debugInfo?.sheetName);
+      setParticipants(result.participants);
+      setSettlements(result.settlements);
+      setPayments(result.payments || []);
+
+      // Persist to Sheet using NEW Insert logic
+      if (debugInfo?.sheetName && debugInfo?.sheetId) {
+        addProductToSheet(
+          { ...data, price: data.price },
+          data.consumers,
+          debugInfo.sheetName,
+          debugInfo.sheetId,
+          participants, // full list for columns
+          sheetUrl
+        ).catch(err => console.error("Failed to add product", err));
+      }
+    });
+
+    console.log("Saving new product:", data);
+  };
+
+  /* Logic Updates */
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
+    settlements: true,
+    participants: true,
+    products: true
+  });
+
+  const toggleSection = (section: string) => {
+    setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
+  };
+
+  const handleEditProductSave = async (data: { name: string; price: number; payer: string; consumers: string[] }) => {
+    if (!editingProduct) return;
+
+    const updatedList = products.map(p => {
+      if (p.id === editingProduct.id) {
+        return {
+          ...p,
+          ...data
+        };
+      }
+      return p;
+    });
+
+    setProducts(updatedList);
+
+    // Optimistic UI update done.
+    const productToSave = { ...editingProduct, ...data };
+
+    setEditingProduct(undefined);
+    setIsProductModalOpen(false);
+
+    console.log("Updated product:", editingProduct.id, data);
+
+    // Recalculate locally
+    import('./services/sheets').then(({ calculateStats, updateProductInSheet }) => {
+      const pMap = new Map<string, Participant>();
+      participants.forEach(p => pMap.set(p.name, { ...p }));
+
+      const result = calculateStats(updatedList, pMap, debugInfo?.sheetName);
+      setParticipants(result.participants);
+      setSettlements(result.settlements);
+      setPayments(result.payments || []);
+
+      // PERSIST to Sheet
+      updateProductInSheet(productToSave, result.participants, debugInfo?.sheetName, sheetUrl).catch(err => {
+        console.error("Failed to update product in sheet", err);
+      });
+    });
+  };
+
+  const handleAddPayment = async (payer: string, receiver: string, amount: number) => {
+    // 1. Optimistic Update
+    const tempId = 'temp-pay-' + Date.now();
+    const newPayment: PaymentRecord = {
+      id: tempId,
+      from: payer,
+      to: receiver,
+      amount: amount
+    };
+
+    // We need to add this as a "product" effectively to the calculation logic or just update the payments list?
+    // calculateStats derives payments from products marked as isPayment.
+    // So we should construct a "Payment Product" and add it to a temporary products list for recalculation.
+    const paymentAsProduct: Product = {
+      id: tempId,
+      name: 'Pagamento',
+      price: amount,
+      payer: payer,
+      consumers: [receiver],
+      isPayment: true
+    };
+
+    const updatedProducts = [...products, paymentAsProduct];
+    setProducts(updatedProducts); // This will trigger recalculation if we were using an effect, but we aren't.
+
+    // Recalculate Logic
+    import('./services/sheets').then(({ calculateStats, addPaymentToSheet }) => {
+      const pMap = new Map<string, Participant>();
+      participants.forEach(p => pMap.set(p.name, { ...p })); // Clone to avoid mutation issues during calc
+
+      const result = calculateStats(updatedProducts, pMap, debugInfo?.sheetName);
+      setParticipants(result.participants);
+      setSettlements(result.settlements);
+      setPayments(result.payments || []);
+
+      // 2. Persist in Background
+      if (debugInfo?.sheetName && debugInfo?.sheetId) {
+        addPaymentToSheet(payer, receiver, amount, debugInfo.sheetName, debugInfo.sheetId, participants, sheetUrl)
+          .then(() => console.log("Payment persisted quietly"))
+          .catch(err => {
+            console.error("Failed to persist payment", err);
+            alert("Erro ao salvar pagamento na planilha. Recarregue a página.");
+            loadData(); // Revert on failure
+          });
+      }
+    });
+  };
+
+  const handleDeletePayment = async (paymentId: string) => {
+    // 1. Optimistic Update
+    const updatedProducts = products.filter(p => p.id !== paymentId);
+    setProducts(updatedProducts);
+
+    import('./services/sheets').then(({ calculateStats, deleteProductFromSheet }) => {
+      const pMap = new Map<string, Participant>();
+      participants.forEach(p => pMap.set(p.name, { ...p }));
+
+      const result = calculateStats(updatedProducts, pMap, debugInfo?.sheetName);
+      setParticipants(result.participants);
+      setSettlements(result.settlements);
+      setPayments(result.payments || []);
+
+      if (debugInfo?.sheetName && debugInfo?.sheetId) {
+        const dummyProduct: any = { id: paymentId };
+        deleteProductFromSheet(dummyProduct, debugInfo.sheetName, debugInfo.sheetId, sheetUrl)
+          .then(() => console.log("Payment deletion persisted quietly"))
+          .catch(err => {
+            console.error("Failed to delete payment", err);
+            alert("Erro ao remover pagamento. Recarregue a página.");
+            loadData();
+          });
+      }
+    });
+  };
+
+  const handleUpdateParticipant = (name: string, data?: { pix?: { key: string; type: string }, responsible?: string }) => {
+    let found = false;
+    const updated = participants.map(p => {
+      if (p.name === name) {
+        found = true;
+        return {
+          ...p,
+          ...(data?.pix ? { pix: data.pix as any } : {}),
+          ...(data?.responsible !== undefined ? { paymentResponsible: data.responsible } : {})
+        };
+      }
+      return p;
+    });
+
+    if (!found) {
+      // Add new participant
+      updated.push({
+        name,
+        totalPaid: 0,
+        totalConsumed: 0,
+        netBalance: 0,
+        pix: data?.pix as any, // undefined if not provided
+        paymentResponsible: data?.responsible
+      });
+    }
+
+    setParticipants(updated);
+    console.log("Updated participant:", name, data);
+
+    // Persist to Sheet
+    if (!found && debugInfo?.sheetName && debugInfo?.sheetId) {
+      // NEW Participant -> Insert Column
+      import('./services/sheets').then(({ addParticipantToSheet }) => {
+        addParticipantToSheet(name, debugInfo.sheetName, debugInfo!.sheetId!, sheetUrl)
+          .catch(err => console.error("Failed to add participant col", err));
+      });
+    }
+
+    if (data) {
+      import('./services/sheets').then(({ saveParticipantData }) => {
+        saveParticipantData(name, data, sheetUrl).catch(err => {
+          console.error("Falha ao salvar dados do participante", err);
+        });
+      });
+    }
+  };
 
   const totalCost = products.reduce((acc, p) => acc + p.price, 0);
 
@@ -36,7 +310,7 @@ function App() {
       <Layout>
         <div className="flex flex-col items-center justify-center h-[60vh] text-charcoal-400 gap-4">
           <RefreshCw className="w-10 h-10 animate-spin text-ember-500" />
-          <p>Loading Churrasco Data...</p>
+          <p>Carregando Dados do Churrasco...</p>
         </div>
       </Layout>
     );
@@ -45,16 +319,64 @@ function App() {
   if (error) {
     return (
       <Layout>
-        <div className="flex flex-col items-center justify-center h-[60vh] text-red-400 gap-4">
+        <div className="flex flex-col items-center justify-center p-8 text-red-400 gap-4 max-w-2xl mx-auto mt-20">
           <AlertCircle className="w-12 h-12" />
-          <p className="text-xl font-semibold">Error Loading Data</p>
-          <p className="text-sm bg-red-900/20 p-4 rounded-lg border border-red-500/20">{error}</p>
-          <button
-            onClick={loadData}
-            className="px-6 py-2 bg-charcoal-800 hover:bg-charcoal-700 rounded-lg text-white transition-colors"
-          >
-            Try Again
-          </button>
+          <h2 className="text-xl font-semibold">Erro ao Carregar Dados</h2>
+
+          <div className="w-full bg-red-900/10 border border-red-500/20 rounded-lg p-4 text-sm text-center">
+            <p className="font-mono mb-2">{error}</p>
+            {error.includes('metadata') && (
+              <div className="mt-4 p-4 bg-charcoal-900 rounded border border-charcoal-700 text-charcoal-300 text-left">
+                <p className="font-bold mb-2 text-ember-500">Causa Possível: Permissões</p>
+                <p className="mb-2">A planilha pode estar privada. Você precisa compartilhá-la com este email de Serviço:</p>
+                <code className="block bg-black/30 p-2 rounded select-all text-white font-mono break-all">
+                  {SERVICE_ACCOUNT_CONFIG.client_email}
+                </code>
+                <p className="mt-2 text-xs">Copie o email acima, abra sua planilha, clique em "Compartilhar" e cole lá.</p>
+              </div>
+            )}
+          </div>
+
+          <div className="w-full max-w-lg mt-4">
+            <div className="flex gap-2">
+              <div className="flex-1 relative">
+                <input
+                  type="text"
+                  placeholder="Cole o link da planilha Google aqui..."
+                  className="w-full bg-charcoal-700/50 text-white rounded-lg pl-10 pr-4 py-3 border border-charcoal-600 focus:border-ember-500 focus:ring-1 focus:ring-ember-500 transition-all outline-none"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      loadData((e.currentTarget as HTMLInputElement).value);
+                      (e.currentTarget as HTMLInputElement).value = ''; // Clear input usually? Or keep?
+                      // If we setSheetUrl state, maybe clear input to show status below.
+                      (e.currentTarget as HTMLInputElement).value = '';
+                    }
+                  }}
+                />
+                <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/3/30/Google_Sheets_logo_%282014-2020%29.svg/512px-Google_Sheets_logo_%282014-2020%29.svg.png"
+                  className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 opacity-70" alt="Sheet" />
+              </div>
+            </div>
+
+            {/* Connection Status */}
+            {sheetUrl && (
+              <div className="flex items-center justify-between bg-green-500/10 border border-green-500/20 rounded-lg px-4 py-2 mt-2">
+                <div className="flex items-center gap-2 overflow-hidden">
+                  <div className="w-2 h-2 rounded-full bg-green-500 shrink-0 animate-pulse" />
+                  <span className="text-green-400 text-sm font-medium truncate">
+                    Vinculado: <span className="text-white">{debugInfo?.sheetName || 'Planilha'}</span>
+                  </span>
+                </div>
+                <button
+                  onClick={handleDisconnect}
+                  className="text-charcoal-400 hover:text-red-400 p-1 rounded-md hover:bg-white/5 transition-colors"
+                  title="Desvincular"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </Layout>
     );
@@ -62,6 +384,102 @@ function App() {
 
   return (
     <Layout>
+      <AddProductModal
+        isOpen={isProductModalOpen}
+        onClose={() => {
+          setIsProductModalOpen(false);
+          setEditingProduct(undefined);
+        }}
+        participants={participants}
+        onAdd={handleAddProduct}
+        onEdit={handleEditProductSave}
+        productToEdit={editingProduct}
+      />
+
+      {/* Modal de Gerenciar Participantes */}
+      <ManageParticipantsModal
+        isOpen={isManageParticipantsOpen}
+        onClose={() => {
+          setIsManageParticipantsOpen(false);
+          setEditingParticipant(undefined);
+        }}
+        participants={participants}
+        products={products}
+        initialExpandedParticipant={editingParticipant}
+        onUpdate={(name, pix) => handleUpdateParticipant(name, pix as any)}
+        onToggleConsumption={(productId, participantName, isConsumed) => {
+          // Optimistic Update
+          const updated = products.map(p => {
+            if (p.id === productId) {
+              const newConsumers = isConsumed
+                ? [...p.consumers, participantName]
+                : p.consumers.filter(c => c !== participantName);
+              return { ...p, consumers: newConsumers };
+            }
+            return p;
+          });
+          setProducts(updated);
+
+          // Update State
+          import('./services/sheets').then(({ calculateStats, updateProductInSheet }) => {
+            const pMap = new Map<string, Participant>();
+            participants.forEach(part => pMap.set(part.name, { ...part }));
+
+            const result = calculateStats(updated, pMap, debugInfo?.sheetName);
+            setParticipants(result.participants);
+            setSettlements(result.settlements);
+
+            // Persist
+            const targetProduct = updated.find(p => p.id === productId);
+            if (targetProduct && debugInfo?.sheetName) {
+              updateProductInSheet(targetProduct, result.participants, debugInfo.sheetName, sheetUrl)
+                .then(() => console.log("Updated product consumption"))
+                .catch(err => console.error("Failed to update consumption", err));
+            }
+          });
+        }}
+      />
+
+      {/* Sheet Input */}
+      <div className="mb-8 p-4 glass-panel rounded-xl border border-white/5 bg-charcoal-900/40">
+        <label className="block text-xs font-bold text-charcoal-400 mb-2 uppercase tracking-widest">Importar do Google Sheets</label>
+        <div className="flex gap-3">
+          <input
+            type="text"
+            value={sheetUrl}
+            onChange={(e) => setSheetUrl(e.target.value)}
+            placeholder="Cole o link da planilha aqui..."
+            className="flex-1 bg-charcoal-950/80 border border-charcoal-700/50 rounded-xl px-4 py-3 text-white placeholder-charcoal-600 focus:outline-none focus:border-ember-500/50 focus:ring-1 focus:ring-ember-500/50 transition-all shadow-inner"
+          />
+          <button
+            onClick={() => loadData(sheetUrl)}
+            className="px-6 py-3 bg-charcoal-800 hover:bg-charcoal-700 text-white font-medium rounded-xl transition-all shadow-lg shadow-charcoal-900/20 border border-white/5 active:scale-95"
+          >
+            Carregar
+          </button>
+        </div>
+
+        {/* Connection Status Indicator */}
+        {sheetUrl && debugInfo?.sheetName && (
+          <div className="mt-3 flex items-center justify-between bg-green-500/10 border border-green-500/20 rounded-lg px-4 py-2">
+            <div className="flex items-center gap-2 overflow-hidden">
+              <div className="w-2 h-2 rounded-full bg-green-500 shrink-0 animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.6)]" />
+              <span className="text-green-400 text-sm font-medium truncate">
+                Vinculado: <span className="text-white font-bold">{debugInfo.sheetName}</span>
+              </span>
+            </div>
+            <button
+              onClick={handleDisconnect}
+              className="text-charcoal-400 hover:text-red-400 text-xs flex items-center gap-1 px-2 py-1 rounded-md hover:bg-white/5 transition-colors border border-transparent hover:border-red-500/20"
+              title="Desvincular Planilha"
+            >
+              <Trash2 className="w-3 h-3" />
+              Desvincular
+            </button>
+          </div>
+        )}
+      </div>
+
       {/* Overview Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
         <div className="glass-panel p-6 rounded-2xl flex items-center gap-4 relative overflow-hidden group">
@@ -70,7 +488,7 @@ function App() {
             <DollarSign className="w-6 h-6 text-ember-400" />
           </div>
           <div>
-            <p className="text-charcoal-400 text-sm font-medium">Total Cost</p>
+            <p className="text-charcoal-400 text-sm font-medium">Custo Total</p>
             <p className="text-2xl font-bold text-white">R$ {totalCost.toFixed(2)}</p>
           </div>
         </div>
@@ -81,7 +499,7 @@ function App() {
             <Users className="w-6 h-6 text-blue-400" />
           </div>
           <div>
-            <p className="text-charcoal-400 text-sm font-medium">Participants</p>
+            <p className="text-charcoal-400 text-sm font-medium">Participantes</p>
             <p className="text-2xl font-bold text-white">{participants.length}</p>
           </div>
         </div>
@@ -92,7 +510,7 @@ function App() {
             <ShoppingBag className="w-6 h-6 text-green-400" />
           </div>
           <div>
-            <p className="text-charcoal-400 text-sm font-medium">Products</p>
+            <p className="text-charcoal-400 text-sm font-medium">Produtos</p>
             <p className="text-2xl font-bold text-white">{products.length}</p>
           </div>
         </div>
@@ -100,105 +518,304 @@ function App() {
 
       {/* Main Actions */}
       <div className="flex flex-wrap gap-4 mb-8">
-        <button className="flex-1 md:flex-none px-6 py-3 bg-gradient-to-r from-ember-600 to-red-600 hover:from-ember-500 hover:to-red-500 text-white font-semibold rounded-xl shadow-lg shadow-ember-900/20 transition-all flex items-center justify-center gap-2 transform hover:-translate-y-0.5 active:translate-y-0">
+        <button
+          onClick={() => {
+            setEditingProduct(undefined);
+            setIsProductModalOpen(true);
+          }}
+          className="flex-1 md:flex-none px-6 py-3 bg-gradient-to-r from-ember-600 to-red-600 hover:from-ember-500 hover:to-red-500 text-white font-semibold rounded-xl shadow-lg shadow-ember-900/20 transition-all flex items-center justify-center gap-2 transform hover:-translate-y-0.5 active:translate-y-0 text-shadow"
+        >
           <Plus className="w-5 h-5" />
-          Add Product
-        </button>
-        <button className="flex-1 md:flex-none px-6 py-3 glass-panel hover:bg-white/10 text-white font-semibold rounded-xl transition-all flex items-center justify-center gap-2">
-          <Users className="w-5 h-5" />
-          Add Participant
+          Adicionar Produto
         </button>
         <button
-          onClick={loadData}
+          onClick={() => setIsManageParticipantsOpen(true)}
+          className="flex-1 md:flex-none px-6 py-3 glass-panel hover:bg-white/10 text-white font-semibold rounded-xl transition-all flex items-center justify-center gap-2"
+        >
+          <Users className="w-5 h-5" />
+          Participantes
+        </button>
+        <button
+          onClick={() => loadData()}
           className="flex-none px-4 py-3 glass-panel hover:bg-white/10 text-white rounded-xl transition-all flex items-center justify-center"
-          title="Refresh"
+          title="Atualizar"
         >
           <RefreshCw className="w-5 h-5" />
         </button>
       </div>
 
-      {/* Content Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {/* Participants Breakdown */}
-        <div className="space-y-4">
-          <h2 className="text-xl font-semibold text-white flex items-center gap-2">
-            <Users className="w-5 h-5 text-ember-500" />
-            Participants Report
-          </h2>
-          <div className="grid gap-4">
-            {participants.length === 0 ? (
-              <div className="text-charcoal-500 italic p-4">No participants found.</div>
-            ) : (
-              participants.map((person) => (
-                <div key={person.name} className="glass-panel p-5 rounded-xl border-l-4 border-l-ember-500 hover:translate-x-1 transition-transform">
-                  <div className="flex justify-between items-start mb-3">
-                    <h3 className="font-bold text-lg">{person.name}</h3>
-                    <span className="text-xl font-bold text-ember-400">R$ {person.totalToPay.toFixed(2)}</span>
-                  </div>
-                  <div className="space-y-1">
-                    {person.productsConsumed.map((item, idx) => (
-                      <div key={idx} className="flex justify-between text-sm text-charcoal-400">
-                        <span>{item.productName}</span>
-                        <span>R$ {item.shareCost.toFixed(2)}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
+      {/* NEW Layout: Products (Top) / Matrix + Participants (Bottom) */}
+      <div className="flex flex-col gap-8">
 
-        {/* Products List */}
-        <div className="space-y-4">
-          <h2 className="text-xl font-semibold text-white flex items-center gap-2">
-            <ShoppingBag className="w-5 h-5 text-blue-400" />
-            Products
-          </h2>
-          <div className="glass-panel rounded-xl overflow-hidden">
+        {/* Top Row: Products (Full Width) */}
+        <Section
+          title="Produtos"
+          icon={<ShoppingBag className="w-5 h-5 text-blue-400" />}
+          isExpanded={expandedSections['products']}
+          onToggle={() => toggleSection('products')}
+        >
+          {products.length === 0 ? (
+            <div className="text-charcoal-500 italic p-8 text-center space-y-4">
+              <p>Nenhum produto encontrado.</p>
+            </div>
+          ) : (
+            <ProductsTable
+              products={products}
+              debugInfo={debugInfo}
+              onEdit={(p) => {
+                setEditingProduct(p);
+                setIsProductModalOpen(true);
+              }}
+              onDelete={async (p) => {
+                if (confirm(`Tem certeza que deseja excluir "${p.name}"?`)) {
+                  // Optimistic delete
+                  const updated = products.filter(prod => prod.id !== p.id);
+                  setProducts(updated);
 
-            {products.length === 0 ? (
-              <div className="text-charcoal-500 italic p-8 text-center">No products found on sheet.</div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-charcoal-900/50 text-charcoal-400">
-                    <tr>
-                      <th className="p-4 font-medium">Item</th>
-                      <th className="p-4 font-medium">Value</th>
-                      <th className="p-4 font-medium">Consumers</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/5">
-                    {products.map((p) => (
-                      <tr key={p.id} className="hover:bg-white/5 transition-colors">
-                        <td className="p-4 font-medium text-white">{p.name}</td>
-                        <td className="p-4 text-charcoal-300">R$ {p.price.toFixed(2)}</td>
-                        <td className="p-4 text-charcoal-400">
-                          <div className="flex -space-x-2 overflow-hidden">
-                            {p.consumers.map((c, i) => (
-                              <div key={i} className="w-6 h-6 rounded-full bg-charcoal-700 flex items-center justify-center text-[10px] border border-charcoal-800" title={c}>
-                                {c.charAt(0)}
-                              </div>
-                            ))}
-                            {p.consumers.length > 3 && (
-                              <div className="w-6 h-6 rounded-full bg-charcoal-800 flex items-center justify-center text-[10px] border border-charcoal-800">
-                                +{p.consumers.length}
-                              </div>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                  // Recalculate
+                  import('./services/sheets').then(({ calculateStats, deleteProductFromSheet }) => {
+                    const pMap = new Map<string, Participant>();
+                    participants.forEach(part => pMap.set(part.name, { ...part }));
+
+                    const result = calculateStats(updated, pMap, debugInfo?.sheetName);
+                    setParticipants(result.participants);
+                    setSettlements(result.settlements);
+
+                    // Persist
+                    if (debugInfo?.sheetName && debugInfo?.sheetId) {
+                      deleteProductFromSheet(p, debugInfo.sheetName, debugInfo.sheetId, sheetUrl)
+                        .then(() => console.log("Deleted product from sheet"))
+                        .catch(err => console.error("Failed to delete", err));
+                    }
+                  });
+                }
+              }}
+            />
+          )}
+        </Section>
+
+        {/* Bottom Row: Matrix and Participants side-by-side on desktop */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          <Section
+            title="Plano de Pagamentos"
+            icon={<RefreshCw className="w-5 h-5 text-green-400" />}
+            isExpanded={expandedSections['settlements']}
+            onToggle={() => toggleSection('settlements')}
+          >
+            <SettlementMatrix
+              settlements={settlements}
+              participants={participants}
+              payments={payments}
+              onAddPayment={handleAddPayment}
+              onDeletePayment={handleDeletePayment}
+            // No need for setSettlements here unless we want to drag/drop the CENTRALIZED list, which is tricky.
+            // Disabling reorder for centralized view implicitly.
+            />
+          </Section>
+
+          <Section
+            title="Participantes"
+            icon={<Users className="w-5 h-5 text-ember-400" />}
+            isExpanded={expandedSections['participants']}
+            onToggle={() => toggleSection('participants')}
+          >
+            <div className="space-y-3">
+              {participants.map((participant) => (
+                <ParticipantCard
+                  key={participant.name}
+                  participant={participant}
+                  allProducts={products}
+                  onEdit={() => {
+                    setEditingParticipant(participant.name);
+                    setIsManageParticipantsOpen(true);
+                  }}
+                />
+              ))}
+              <div className="pt-4 mt-4 border-t border-white/5">
+                <button
+                  onClick={() => setIsManageParticipantsOpen(true)}
+                  className="w-full py-2 bg-charcoal-800 hover:bg-charcoal-700 text-charcoal-300 hover:text-white rounded-lg transition-colors text-sm font-medium border border-dashed border-charcoal-600 hover:border-white/20"
+                >
+                  Gerenciar Participantes...
+                </button>
               </div>
-            )}
-          </div>
+            </div>
+          </Section>
         </div>
       </div>
+
     </Layout>
   );
 }
+
+const Section = ({ title, icon, isExpanded, onToggle, children }: any) => {
+  return (
+    <div className="glass-panel overflow-hidden rounded-2xl border border-white/5">
+      <div
+        className="p-4 flex items-center justify-between bg-charcoal-900/50 backdrop-blur-sm select-none border-b border-white/5 cursor-pointer hover:bg-white/5 transition-colors"
+        onClick={onToggle}
+      >
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 text-white font-semibold text-lg">
+            {icon}
+            {title}
+          </div>
+        </div>
+
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggle();
+          }}
+          className="p-2 hover:bg-white/10 rounded-lg transition-colors text-charcoal-400"
+        >
+          {isExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+        </button>
+      </div>
+
+      <AnimatePresence initial={false}>
+        {isExpanded && (
+          <motion.div
+            initial="collapsed"
+            animate="open"
+            exit="collapsed"
+            variants={{
+              open: { opacity: 1, height: "auto" },
+              collapsed: { opacity: 0, height: 0 }
+            }}
+            transition={{ duration: 0.3, ease: [0.04, 0.62, 0.23, 0.98] }}
+          >
+            <div className="p-6">
+              {children}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
+
+const ProductsTable = ({ products, debugInfo, onEdit, onDelete }: { products: any[], debugInfo: any, onEdit: (p: any) => void, onDelete: (p: any) => void }) => {
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+
+  // Close menu on click outside
+  useEffect(() => {
+    const handleClickOutside = () => setOpenMenuId(null);
+    window.addEventListener('click', handleClickOutside);
+    return () => window.removeEventListener('click', handleClickOutside);
+  }, []);
+
+  if (products.length === 0) {
+    return (
+      <div className="text-charcoal-500 italic p-8 text-center space-y-4">
+        <p>Nenhum produto encontrado.</p>
+        {debugInfo && (
+          <div className="text-left bg-charcoal-900 p-4 rounded-xl border border-charcoal-700 font-mono text-xs overflow-x-auto">
+            <p className="text-ember-500 font-bold mb-2">Informações de Depuração:</p>
+            <p>Nome da Planilha: <span className="text-white">{debugInfo.sheetName}</span></p>
+            <p className="mt-2 text-charcoal-400">Primeiras 5 Linhas:</p>
+            {debugInfo.firstRows.map((row: string[], i: number) => (
+              <div key={i} className="flex gap-2 border-b border-white/5 py-1">
+                <span className="text-charcoal-500 w-6">{i + 1}:</span>
+                {row.map((cell, j) => (
+                  <span key={j} className="bg-white/5 px-1 rounded text-charcoal-300 whitespace-nowrap">
+                    {cell || '""'}
+                  </span>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="w-full">
+      <table className="w-full text-left text-sm table-fixed">
+        <thead className="bg-charcoal-900/50 text-charcoal-400">
+          <tr>
+            <th className="p-3 font-medium text-xs uppercase tracking-wider w-[40%] md:w-[30%]">Item</th>
+            <th className="p-3 font-medium text-xs uppercase tracking-wider w-[25%] md:w-[15%]">Valor</th>
+            <th className="p-3 font-medium hidden md:table-cell text-xs uppercase tracking-wider md:w-[20%]">Quem Pagou</th>
+            <th className="p-3 font-medium text-xs uppercase tracking-wider w-[25%] md:w-[30%]">Consumidores</th>
+            <th className="p-3 w-[10%] md:w-[5%]"></th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-white/5">
+          {products.map((p: any) => (
+            <tr key={p.id} className="hover:bg-white/5 transition-colors group relative">
+              <td className="p-3 font-medium text-white truncate pr-2" title={p.name}>
+                {p.name}
+              </td>
+              <td className="p-3 text-charcoal-300 whitespace-nowrap">R$ {p.price.toFixed(2)}</td>
+              <td className="p-3 text-charcoal-400 hidden md:table-cell truncate">
+                <span className="px-2 py-1 bg-charcoal-800 rounded text-xs">{p.payer}</span>
+              </td>
+              <td className="p-3 text-charcoal-400">
+                <div className="flex flex-wrap gap-1">
+                  {/* Show first 3 avatars on mobile, 5 on desktop */}
+                  {p.consumers.slice(0, 5).map((c: string, i: number) => (
+                    <div key={i} className="w-5 h-5 md:w-6 md:h-6 rounded-full bg-charcoal-700 flex items-center justify-center text-[8px] md:text-[10px] border border-charcoal-800 shrink-0 select-none" title={c}>
+                      {c.charAt(0)}
+                    </div>
+                  ))}
+                  {p.consumers.length > 5 && (
+                    <div className="w-5 h-5 md:w-6 md:h-6 rounded-full bg-charcoal-800 flex items-center justify-center text-[8px] md:text-[10px] border border-charcoal-800 shrink-0">
+                      +{p.consumers.length - 5}
+                    </div>
+                  )}
+                </div>
+              </td>
+              <td className="p-3 text-right relative">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setOpenMenuId(openMenuId === p.id ? null : p.id);
+                  }}
+                  className="p-1.5 hover:bg-white/10 rounded-lg text-charcoal-400 transition-colors"
+                >
+                  <MoreVertical className="w-5 h-5" />
+                </button>
+
+                <AnimatePresence>
+                  {openMenuId === p.id && (
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                      exit={{ opacity: 0, scale: 0.95 }}
+                      className="absolute right-8 top-8 z-50 w-32 bg-charcoal-800 border border-charcoal-600 rounded-xl shadow-2xl overflow-hidden"
+                    >
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onEdit(p);
+                          setOpenMenuId(null);
+                        }}
+                        className="w-full px-4 py-2 text-left text-sm text-charcoal-200 hover:bg-white/5 flex items-center gap-2"
+                      >
+                        <Edit className="w-4 h-4" /> Editar
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDelete(p);
+                          setOpenMenuId(null);
+                        }}
+                        className="w-full px-4 py-2 text-left text-sm text-red-400 hover:bg-red-500/10 flex items-center gap-2"
+                      >
+                        <Trash2 className="w-4 h-4" /> Excluir
+                      </button>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+};
 
 export default App;
