@@ -104,25 +104,30 @@ function ParticipantRow({ participant, allParticipants, onSave, products, onTogg
     return (
         <div className="bg-charcoal-800/50 rounded-xl border border-white/5 overflow-hidden">
             <div
-                className="p-4 flex items-center justify-between cursor-pointer hover:bg-white/5 transition-colors"
+                className="p-5 flex items-center justify-between cursor-pointer hover:bg-white/5 transition-colors group"
                 onClick={() => setIsExpanded(!isExpanded)}
             >
-                <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-ember-500 to-orange-600 flex items-center justify-center text-white font-bold text-xs">
+                <div className="flex items-center gap-4">
+                    <div className="w-10 h-10 rounded-full bg-gradient-to-br from-ember-500 to-orange-600 flex items-center justify-center text-white font-bold text-sm shadow-lg shadow-ember-900/20">
                         {participant.name.charAt(0)}
                     </div>
-                    <span className="font-medium text-white">{participant.name}</span>
-                    {participant.paymentResponsible && (
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-white/10 text-charcoal-400 border border-white/10">
-                            Pago por: {participant.paymentResponsible}
-                        </span>
-                    )}
+                    <div>
+                        <p className="font-semibold text-white text-lg leading-tight">{participant.name}</p>
+                        {participant.paymentResponsible && (
+                            <div className="mt-1 bg-charcoal-900/50 px-2 py-0.5 rounded-md border border-white/5 inline-flex items-center gap-1.5">
+                                <span className="text-[9px] uppercase tracking-wider text-charcoal-500 font-bold">PAGO POR</span>
+                                <span className="text-xs text-charcoal-300 font-medium">{participant.paymentResponsible}</span>
+                            </div>
+                        )}
+                    </div>
                 </div>
-                <div className="flex items-center gap-2">
-                    <span className="text-xs text-charcoal-400">
+                <div className="flex items-center gap-3">
+                    <span className="text-xs font-medium text-charcoal-500 uppercase tracking-widest opacity-0 group-hover:opacity-100 transition-opacity hidden sm:block">
                         {isExpanded ? 'Fechar' : 'Gerenciar'}
                     </span>
-                    {isExpanded ? <ChevronUp className="w-4 h-4 text-charcoal-500" /> : <ChevronDown className="w-4 h-4 text-charcoal-500" />}
+                    <div className={`p-1 rounded-full transition-colors ${isExpanded ? 'bg-white/10 text-white' : 'text-charcoal-500'}`}>
+                        {isExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                    </div>
                 </div>
             </div>
 

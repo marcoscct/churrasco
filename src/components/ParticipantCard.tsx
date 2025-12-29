@@ -1,6 +1,7 @@
 import type { Participant, Product } from '../types';
 import { ArrowDownLeft, ArrowUpRight, Edit2 } from 'lucide-react';
 import { clsx } from 'clsx';
+import { formatCurrency } from '../utils/format';
 
 interface ParticipantCardProps {
     participant: Participant;
@@ -19,7 +20,15 @@ export function ParticipantCard({ participant, products, onEdit }: ParticipantCa
     // We can check if they have a 'paymentResponsible' set.
     const isDependent = !!participant.paymentResponsible && participant.paymentResponsible !== participant.name;
 
-    const consumedProducts = products.filter(p => p.consumers.includes(participant.name));
+    const consumedProducts = (products || []).filter(p => p.consumers.includes(participant.name));
+
+    let balanceLabel = "Nada a Pagar/Receber";
+    if (isReceiver) balanceLabel = "Saldo a Receber";
+    if (isPayer) balanceLabel = "Saldo Devedor";
+
+    // Dependent Display Logic:
+    // If dependent, we show "Pagou" as if they paid their consumption (covered by responsible).
+    const displayPaid = isDependent ? participant.totalConsumed : participant.totalPaid;
 
     return (
         <div className={clsx(
@@ -36,19 +45,21 @@ export function ParticipantCard({ participant, products, onEdit }: ParticipantCa
             </div>
 
             <div className="flex justify-between items-start mb-4 pr-8">
-                <div>
-                    <h3 className="font-bold text-lg text-white">{participant.name}</h3>
-                    {participant.pix && (
-                        <div className="flex items-center gap-1 text-xs text-charcoal-400 mt-1">
-                            <span className="uppercase bg-charcoal-800 px-1 rounded">{participant.pix.type}</span>
-                            <span className="font-mono">{participant.pix.key}</span>
-                        </div>
-                    )}
+                <div className="flex flex-col gap-2">
+                    <div>
+                        <h3 className="font-bold text-lg text-white leading-none">{participant.name}</h3>
+                        {participant.pix && (
+                            <div className="flex items-center gap-1 text-xs text-charcoal-400 mt-2">
+                                <span className="uppercase bg-charcoal-800 px-1 rounded">{participant.pix.type}</span>
+                                <span className="font-mono">{participant.pix.key}</span>
+                            </div>
+                        )}
+                    </div>
+
                     {isDependent && (
-                        <div className="mt-1">
-                            <span className="text-xxs px-1.5 py-0.5 rounded-full bg-charcoal-800 border border-charcoal-600 text-charcoal-400">
-                                Pago por: {participant.paymentResponsible}
-                            </span>
+                        <div className="bg-charcoal-800/80 p-2 rounded-md border border-white/5 inline-flex flex-col justify-center min-w-[100px]">
+                            <p className="text-charcoal-400 text-[10px] uppercase tracking-wider font-bold mb-0.5">PAGO POR</p>
+                            <p className="font-bold text-white text-sm leading-tight">{participant.paymentResponsible}</p>
                         </div>
                     )}
                 </div>
@@ -67,11 +78,17 @@ export function ParticipantCard({ participant, products, onEdit }: ParticipantCa
             <div className="grid grid-cols-2 gap-2 text-sm mb-3">
                 <div className="bg-charcoal-900/50 p-3 rounded-lg">
                     <p className="text-charcoal-400 text-xs mb-1">Consumiu</p>
-                    <p className="font-semibold text-white">R$ {participant.totalConsumed.toFixed(2)}</p>
+                    <p className="font-semibold text-white">{formatCurrency(participant.totalConsumed)}</p>
                 </div>
-                <div className="bg-charcoal-900/50 p-3 rounded-lg">
-                    <p className="text-charcoal-400 text-xs mb-1">Pagou</p>
-                    <p className="font-semibold text-white">R$ {participant.totalPaid.toFixed(2)}</p>
+                <div
+                    className="bg-charcoal-900/50 p-3 rounded-lg cursor-help transition-colors hover:bg-charcoal-800/50"
+                    title={isDependent ? `Pago por ${participant.paymentResponsible}` : undefined}
+                >
+                    <p className="text-charcoal-400 text-xs mb-1 flex items-center gap-1">
+                        Pagou
+                        {isDependent && <span className="text-charcoal-500 font-bold">*</span>}
+                    </p>
+                    <p className="font-semibold text-white">{formatCurrency(displayPaid)}</p>
                 </div>
             </div>
 
@@ -87,7 +104,7 @@ export function ParticipantCard({ participant, products, onEdit }: ParticipantCa
             )}
 
             <div className="pt-3 border-t border-white/5 flex justify-between items-center">
-                <span className="text-sm text-charcoal-400">Saldo Final</span>
+                <span className="text-sm text-charcoal-400">{balanceLabel}</span>
                 <span className={clsx(
                     "text-lg font-bold",
                     isSettled ? "text-charcoal-500" : isReceiver ? "text-green-400" : "text-red-400"
@@ -95,7 +112,7 @@ export function ParticipantCard({ participant, products, onEdit }: ParticipantCa
                     {isDependent && isSettled
                         ? <span className="text-sm font-normal text-charcoal-500 italic">Zerado no Responsável</span>
                         : <>
-                            {isReceiver ? "+" : ""} R$ {participant.netBalance.toFixed(2)}
+                            {isReceiver ? "+" : ""} {formatCurrency(participant.netBalance).replace('- ', '')}
                         </>
                     }
                 </span>

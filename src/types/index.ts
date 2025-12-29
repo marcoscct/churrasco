@@ -4,6 +4,7 @@ export interface Product {
     price: number;
     payer: string; // Name of who paid
     consumers: string[]; // List of names
+    isPayment?: boolean; // Marker for payment records masquerading as products
 }
 
 export interface Participant {
