@@ -7,16 +7,18 @@ import { listMockBarbecues, createBarbecue, signFile } from '../services/drive';
 import type { DriveFile } from '../services/drive';
 import { initializeSheet } from '../services/sheets';
 
+import useDrivePicker from 'react-google-drive-picker';
+import { GOOGLE_API_KEY, GOOGLE_CLIENT_ID } from '../config/auth';
+
 export const Dashboard: React.FC = () => {
     const { user, logout, token } = useAuth();
     const navigate = useNavigate();
     const [files, setFiles] = useState<DriveFile[]>([]);
     const [loading, setLoading] = useState(true);
     const [creating, setCreating] = useState(false);
+    const [openPicker] = useDrivePicker();
 
     // Import State
-    const [showImport, setShowImport] = useState(false);
-    const [importId, setImportId] = useState('');
     const [importing, setImporting] = useState(false);
     const [importError, setImportError] = useState<string | null>(null);
 
@@ -54,26 +56,42 @@ export const Dashboard: React.FC = () => {
         }
     };
 
-    const handleImport = async () => {
-        if (!importId || !token) return;
-
-        let targetId = importId;
-        const match = importId.match(/\/d\/([a-zA-Z0-9-_]+)/);
-        if (match) targetId = match[1];
+    const handleImport = async (fileId: string) => {
+        if (!fileId || !token) return;
 
         setImporting(true);
         setImportError(null);
         try {
-            await signFile(targetId, token);
-            setImportId('');
-            setShowImport(false);
-            loadList();
+            await signFile(fileId, token);
+            loadList(); // Refresh list to show imported file
         } catch (error) {
             console.error("Failed to import", error);
             setImportError("Erro ao importar. Verifique se você tem permissão de EDITAR este arquivo.");
         } finally {
             setImporting(false);
         }
+    };
+
+    const handleOpenPicker = () => {
+        openPicker({
+            clientId: GOOGLE_CLIENT_ID,
+            developerKey: GOOGLE_API_KEY,
+            viewId: "SPREADSHEETS",
+            token: token || "", // Pass existing token if possible, or let picker handle it
+            showUploadView: true,
+            showUploadFolders: true,
+            supportDrives: true,
+            multiselect: false,
+            callbackFunction: (data) => {
+                if (data.action === 'picked') {
+                    const file = data.docs[0];
+                    console.log("Picked file:", file);
+                    if (file.id) {
+                        handleImport(file.id);
+                    }
+                }
+            },
+        });
     };
 
     return (
@@ -111,45 +129,25 @@ export const Dashboard: React.FC = () => {
                     </button>
 
                     <button
-                        onClick={() => setShowImport(!showImport)}
+                        onClick={handleOpenPicker}
+                        disabled={importing}
                         className="bg-slate-800 border border-white/5 p-4 rounded-2xl shadow-lg flex flex-col items-center justify-center gap-2 hover:bg-slate-700/50 transition-all active:scale-95 group"
                     >
-                        <div className="w-10 h-10 bg-slate-700 rounded-full flex items-center justify-center group-hover:bg-slate-600 transition-colors">
-                            <FolderOpen className="w-6 h-6 text-blue-400" />
-                        </div>
-                        <span className="font-bold text-slate-200">Importar Planilha</span>
+                        {importing ? (
+                            <Loader2 className="w-6 h-6 animate-spin text-blue-400" />
+                        ) : (
+                            <div className="w-10 h-10 bg-slate-700 rounded-full flex items-center justify-center group-hover:bg-slate-600 transition-colors">
+                                <FolderOpen className="w-6 h-6 text-blue-400" />
+                            </div>
+                        )}
+                        <span className="font-bold text-slate-200">{importing ? 'Importando...' : 'Selecionar do Drive'}</span>
                     </button>
                 </div>
 
-                {showImport && (
-                    <div className="bg-slate-800 border border-slate-700 rounded-2xl p-4 animate-in fade-in slide-in-from-top-4">
-                        <label className="text-sm text-slate-400 mb-2 block">ID da Planilha ou Link:</label>
-                        <div className="flex gap-2">
-                            <input
-                                type="text"
-                                value={importId}
-                                onChange={(e) => setImportId(e.target.value)}
-                                placeholder="https://docs.google.com/spreadsheets/d/..."
-                                className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-orange-500"
-                            />
-                            <button
-                                onClick={handleImport}
-                                disabled={importing || !importId}
-                                className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-medium disabled:opacity-50 flex items-center gap-2"
-                            >
-                                {importing && <Loader2 className="w-4 h-4 animate-spin" />}
-                                Importar
-                            </button>
-                        </div>
-                        {importError && (
-                            <div className="mt-3 p-3 bg-red-900/20 border border-red-500/30 rounded-lg text-red-200 text-sm flex items-start gap-2 animate-in slide-in-from-top-2">
-                                <span className="mt-0.5">⚠️</span>
-                                {importError}
-                            </div>
-                        )}
-                        <p className="text-xs text-slate-500 mt-2">
-                            Nota: Você precisa ter permissão de <strong>Edição</strong> na planilha para que o App consiga acessá-la.
-                        </p>
+                {importError && (
+                    <div className="p-3 bg-red-900/20 border border-red-500/30 rounded-lg text-red-200 text-sm flex items-start gap-2 animate-in slide-in-from-top-2">
+                        <span className="mt-0.5">⚠️</span>
+                        {importError}
                     </div>
                 )}
 
