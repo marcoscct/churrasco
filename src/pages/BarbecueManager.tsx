@@ -234,21 +234,23 @@ export const BarbecueManager = () => {
         addPaymentToSheet(payer, receiver, amount, debugInfo.sheetName, debugInfo.sheetId, participants, sheetUrl, token!)
           .then((realId) => {
             console.log("Payment persisted. Real ID:", realId);
-            // Replace Temp ID with Real ID in State to allow immediate deletion
+            const realPaymentId = 'pay-' + realId;
+
+            // Replace Temp ID with Real ID in Products
             setProducts(prev => prev.map(p => {
               if (p.id === tempId) {
-                return { ...p, id: 'pay-' + realId };
+                return { ...p, id: realPaymentId };
               }
               return p;
             }));
-            // Update Payments List State too? 
-            // setPayments is derived from products in calculateStats, but we need to trigger re-calc?
-            // Actually, we just updated 'products'. But the 'products' state we just set has the OLD ID.
-            // We need to update 'products' state again.
 
-            // Note: calculateStats is called locally above, but that was with tempId.
-            // To be safe, we might want to reload or just update ID.
-            // Updating ID is enough for deletion.
+            // ALSO Replace Temp ID with Real ID in Payments (Crucial for UI buttons)
+            setPayments(prev => prev.map(p => {
+              if (p.id === tempId) {
+                return { ...p, id: realPaymentId };
+              }
+              return p;
+            }));
           })
           .catch(err => {
             console.error("Failed to persist payment", err);
@@ -341,7 +343,7 @@ export const BarbecueManager = () => {
     }
   };
 
-  const totalCost = products.reduce((acc, p) => acc + p.price, 0);
+  const totalCost = products.filter(p => !p.isPayment).reduce((acc, p) => acc + p.price, 0);
 
   if (loading) {
     return (
