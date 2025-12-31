@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Login } from './pages/Login';
 import { Dashboard } from './pages/Dashboard';
 import { BarbecueManager } from './pages/BarbecueManager';
@@ -22,16 +22,7 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
 
 function App() {
   return (
-    <BrowserRouter basename={import.meta.env.BASE_URL}>
-      {/* 
-          Basename note: 
-          If deployed to marcoscct.github.io/churrasco, basename should be '/churrasco'.
-          If running locally on root, it might be separate.
-          Ideally we detect valid basename or rely on HashRouter if easier? 
-          BrowserRouter is cleaner but requires GitHub Pages '404 hack' or correct navigation.
-          Let's stick to BrowserRouter but we might need to be careful with basepath.
-          The User previously set base: '/churrasco/' in vite.config.ts.
-       */}
+    <HashRouter>
       <Routes>
         <Route path="/login" element={<Login />} />
 
@@ -51,7 +42,7 @@ function App() {
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
-    </BrowserRouter>
+    </HashRouter>
   );
 }
 
