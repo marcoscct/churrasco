@@ -18,7 +18,6 @@ import {
   MoreVertical,
   Edit,
   Trash2,
-  Trash2,
   ArrowLeft,
   Share2
 } from 'lucide-react';
