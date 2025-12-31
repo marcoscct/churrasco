@@ -18,7 +18,9 @@ import {
   MoreVertical,
   Edit,
   Trash2,
-  ArrowLeft
+  Trash2,
+  ArrowLeft,
+  Share2
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import type { Product, Participant, Transaction, PaymentRecord } from '../types';
@@ -663,14 +665,28 @@ export const BarbecueManager = () => {
                 Vinculado: <span className="text-white font-bold">{debugInfo.sheetName}</span>
               </span>
             </div>
-            <button
-              onClick={handleDisconnect}
-              className="text-charcoal-400 hover:text-red-400 text-xs flex items-center gap-1 px-2 py-1 rounded-md hover:bg-white/5 transition-colors border border-transparent hover:border-red-500/20"
-              title="Desvincular Planilha"
-            >
-              <Trash2 className="w-3 h-3" />
-              Desvincular
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  const url = `${window.location.origin}${window.location.pathname}#/join/${id}`;
+                  navigator.clipboard.writeText(url);
+                  alert("Link copiado: " + url);
+                }}
+                className="text-blue-400 hover:text-blue-300 text-xs flex items-center gap-1 px-2 py-1 rounded-md hover:bg-white/5 transition-colors border border-transparent hover:border-blue-500/20"
+                title="Copiar Link de Convite"
+              >
+                <Share2 className="w-3 h-3" />
+                Convidar
+              </button>
+              <button
+                onClick={handleDisconnect}
+                className="text-charcoal-400 hover:text-red-400 text-xs flex items-center gap-1 px-2 py-1 rounded-md hover:bg-white/5 transition-colors border border-transparent hover:border-red-500/20"
+                title="Desvincular Planilha"
+              >
+                <Trash2 className="w-3 h-3" />
+                Desvincular
+              </button>
+            </div>
           </div>
         )}
       </div>
