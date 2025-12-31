@@ -114,9 +114,22 @@ export const BarbecueManager = () => {
     import('../services/sheets').then(({ calculateStats, addProductToSheet }) => {
       // Reconstruct map
       const pMap = new Map<string, Participant>();
-      participants.forEach(p => pMap.set(p.name, { ...p }));
+      const currentParticipants = participants.map(p => ({ ...p }));
+      currentParticipants.forEach(p => pMap.set(p.name, p));
 
-      const result = calculateStats(updatedProducts, pMap, debugInfo?.sheetName);
+      // Reconstruct Payments for Calculation
+      const paymentItems = payments.map(pay => ({
+        id: pay.id,
+        name: 'Pagamento',
+        price: pay.amount,
+        payer: pay.from,
+        consumers: [pay.to],
+        isPayment: true
+      } as Product));
+
+      const allItems = [...updatedProducts, ...paymentItems];
+
+      const result = calculateStats(allItems, pMap, debugInfo?.sheetName);
       setParticipants(result.participants);
       setSettlements(result.settlements);
       setPayments(result.payments || []);
@@ -182,9 +195,22 @@ export const BarbecueManager = () => {
     // Recalculate locally
     import('../services/sheets').then(({ calculateStats, updateProductInSheet }) => {
       const pMap = new Map<string, Participant>();
-      participants.forEach(p => pMap.set(p.name, { ...p }));
+      const currentParticipants = participants.map(p => ({ ...p }));
+      currentParticipants.forEach(p => pMap.set(p.name, p));
 
-      const result = calculateStats(updatedList, pMap, debugInfo?.sheetName);
+      // Reconstruct Payments for Calculation
+      const paymentItems = payments.map(pay => ({
+        id: pay.id,
+        name: 'Pagamento',
+        price: pay.amount,
+        payer: pay.from,
+        consumers: [pay.to],
+        isPayment: true
+      } as Product));
+
+      const allItems = [...updatedList, ...paymentItems];
+
+      const result = calculateStats(allItems, pMap, debugInfo?.sheetName);
       setParticipants(result.participants);
       setSettlements(result.settlements);
       setPayments(result.payments || []);
@@ -201,13 +227,10 @@ export const BarbecueManager = () => {
   const handleAddPayment = async (payer: string, receiver: string, amount: number) => {
     if (isSyncing) return;
     setIsSyncing(true);
-    // 1. Optimistic Update
-    const tempId = 'temp-pay-' + Date.now();
 
-    // We need to add this as a "product" effectively to the calculation logic or just update the payments list?
-    // calculateStats derives payments from products marked as isPayment.
-    // So we should construct a "Payment Product" and add it to a temporary products list for recalculation.
-    const paymentAsProduct: Product = {
+    // 1. Prepare Data
+    const tempId = 'temp-pay-' + Date.now();
+    const newPayment: Product = {
       id: tempId,
       name: 'Pagamento',
       price: amount,
@@ -216,35 +239,39 @@ export const BarbecueManager = () => {
       isPayment: true
     };
 
-    const updatedProducts = [...products, paymentAsProduct];
-    setProducts(updatedProducts); // This will trigger recalculation if we were using an effect, but we aren't.
+    // 2. Reconstruct Full List for Calculation (Products + Existing Payments + New Payment)
+    const existingPaymentsAsProducts = payments.map(pay => ({
+      id: pay.id,
+      name: 'Pagamento',
+      price: pay.amount,
+      payer: pay.from,
+      consumers: [pay.to],
+      isPayment: true
+    } as Product));
 
-    // Recalculate Logic
+    const allItems = [...products, ...existingPaymentsAsProducts, newPayment];
+
+    // 3. Recalculate State
     import('../services/sheets').then(({ calculateStats, addPaymentToSheet }) => {
       const pMap = new Map<string, Participant>();
-      participants.forEach(p => pMap.set(p.name, { ...p })); // Clone to avoid mutation issues during calc
+      const currentParticipants = participants.map(p => ({ ...p })); // Deep copy to avoid mutation issues
+      currentParticipants.forEach(p => pMap.set(p.name, p));
 
-      const result = calculateStats(updatedProducts, pMap, debugInfo?.sheetName);
+      // Note: calculateStats resets totals on the passed map, so we're safe using a clone
+      const result = calculateStats(allItems, pMap, debugInfo?.sheetName);
+
       setParticipants(result.participants);
       setSettlements(result.settlements);
       setPayments(result.payments || []);
 
-      // 2. Persist in Background and Sync ID
+      // 4. Persist
       if (debugInfo?.sheetName && debugInfo?.sheetId) {
         addPaymentToSheet(payer, receiver, amount, debugInfo.sheetName, debugInfo.sheetId, participants, sheetUrl, token!)
           .then((realId) => {
             console.log("Payment persisted. Real ID:", realId);
             const realPaymentId = 'pay-' + realId;
 
-            // Replace Temp ID with Real ID in Products
-            setProducts(prev => prev.map(p => {
-              if (p.id === tempId) {
-                return { ...p, id: realPaymentId };
-              }
-              return p;
-            }));
-
-            // ALSO Replace Temp ID with Real ID in Payments (Crucial for UI buttons)
+            // Update local payment state to replace temp ID with real ID
             setPayments(prev => prev.map(p => {
               if (p.id === tempId) {
                 return { ...p, id: realPaymentId };
@@ -255,7 +282,7 @@ export const BarbecueManager = () => {
           .catch(err => {
             console.error("Failed to persist payment", err);
             alert("Erro ao salvar pagamento na planilha. Recarregue a página.");
-            loadData(); // Revert on failure
+            loadData();
           })
           .finally(() => setIsSyncing(false));
       } else {
@@ -267,23 +294,39 @@ export const BarbecueManager = () => {
   const handleDeletePayment = async (paymentId: string) => {
     if (isSyncing) return;
     setIsSyncing(true);
-    // 1. Optimistic Update
-    const updatedProducts = products.filter(p => p.id !== paymentId);
-    setProducts(updatedProducts);
 
+    // 1. Filter out the deleted payment from existing payments
+    const updatedPayments = payments.filter(p => p.id !== paymentId);
+
+    // 2. Reconstruct Full List (Products + Remaining Payments)
+    const existingPaymentsAsProducts = updatedPayments.map(pay => ({
+      id: pay.id,
+      name: 'Pagamento',
+      price: pay.amount,
+      payer: pay.from,
+      consumers: [pay.to],
+      isPayment: true
+    } as Product));
+
+    const allItems = [...products, ...existingPaymentsAsProducts];
+
+    // 3. Recalculate
     import('../services/sheets').then(({ calculateStats, deleteProductFromSheet }) => {
       const pMap = new Map<string, Participant>();
-      participants.forEach(p => pMap.set(p.name, { ...p }));
+      const currentParticipants = participants.map(p => ({ ...p }));
+      currentParticipants.forEach(p => pMap.set(p.name, p));
 
-      const result = calculateStats(updatedProducts, pMap, debugInfo?.sheetName);
+      const result = calculateStats(allItems, pMap, debugInfo?.sheetName);
       setParticipants(result.participants);
       setSettlements(result.settlements);
       setPayments(result.payments || []);
 
+      // 4. Persist Deletion
       if (debugInfo?.sheetName && debugInfo?.sheetId) {
-        const dummyProduct: any = { id: paymentId };
+        // We pass a dummy product object only with ID because that's what deleteProductFromSheet needs for Payments
+        const dummyProduct: any = { id: paymentId, isPayment: true };
         deleteProductFromSheet(dummyProduct, debugInfo.sheetName, debugInfo.sheetId, sheetUrl)
-          .then(() => console.log("Payment deletion persisted quietly"))
+          .then(() => console.log("Payment deleted successfully"))
           .catch(err => {
             console.error("Failed to delete payment", err);
             alert("Erro ao remover pagamento. Recarregue a página.");
@@ -640,9 +683,22 @@ export const BarbecueManager = () => {
                   // Recalculate
                   import('../services/sheets').then(({ calculateStats, deleteProductFromSheet }) => {
                     const pMap = new Map<string, Participant>();
-                    participants.forEach(part => pMap.set(part.name, { ...part }));
+                    const currentParticipants = participants.map(part => ({ ...part }));
+                    currentParticipants.forEach(part => pMap.set(part.name, part));
 
-                    const result = calculateStats(updated, pMap, debugInfo?.sheetName);
+                    // Reconstruct Payments for Calculation
+                    const paymentItems = payments.map(pay => ({
+                      id: pay.id,
+                      name: 'Pagamento',
+                      price: pay.amount,
+                      payer: pay.from,
+                      consumers: [pay.to],
+                      isPayment: true
+                    } as Product));
+
+                    const allItems = [...updated, ...paymentItems];
+
+                    const result = calculateStats(allItems, pMap, debugInfo?.sheetName);
                     setParticipants(result.participants);
                     setSettlements(result.settlements);
                     setPayments(result.payments || []);
