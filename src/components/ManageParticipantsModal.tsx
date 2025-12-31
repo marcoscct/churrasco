@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, Save, Users, ChevronDown, ChevronUp, Plus } from 'lucide-react';
+import { X, Save, Users, ChevronDown, ChevronUp, Plus, Trash2, AlertTriangle, AlertCircle } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import type { Participant, Product } from '../types';
 
@@ -10,10 +10,12 @@ interface ManageParticipantsModalProps {
     products: Product[];
     onUpdate: (name: string, data?: { pix?: { key: string; type: string }, responsible?: string }) => void;
     onToggleConsumption: (productId: string, participantName: string, isConsumed: boolean) => void;
+    onUpdatePayer: (productId: string, newPayer: string) => void;
+    onRemove: (name: string) => void;
     initialExpandedParticipant?: string;
 }
 
-export function ManageParticipantsModal({ isOpen, onClose, participants, products, onUpdate, onToggleConsumption, initialExpandedParticipant }: ManageParticipantsModalProps) {
+export function ManageParticipantsModal({ isOpen, onClose, participants, products, onUpdate, onToggleConsumption, onUpdatePayer, onRemove, initialExpandedParticipant }: ManageParticipantsModalProps) {
     if (!isOpen) return null;
 
     // Get list of all participants for the responsible selector
@@ -47,6 +49,8 @@ export function ManageParticipantsModal({ isOpen, onClose, participants, product
                                 onSave={(data) => onUpdate(p.name, data)}
                                 products={products}
                                 onToggleConsumption={onToggleConsumption}
+                                onUpdatePayer={onUpdatePayer}
+                                onRemove={onRemove}
                                 defaultExpanded={initialExpandedParticipant === p.name}
                             />
                         ))}
@@ -69,6 +73,8 @@ function ParticipantRow({ participant, allParticipants, onSave, products, onTogg
     onSave: (data: { pix: { key: string, type: string }, responsible: string }) => void,
     products: Product[],
     onToggleConsumption: (pid: string, pname: string, val: boolean) => void,
+    onUpdatePayer: (pid: string, newPayer: string) => void,
+    onRemove: (name: string) => void,
     defaultExpanded?: boolean
 }) {
     const [isExpanded, setIsExpanded] = useState(defaultExpanded || false);
@@ -79,7 +85,7 @@ function ParticipantRow({ participant, allParticipants, onSave, products, onTogg
             setIsExpanded(true);
         }
     }, [defaultExpanded]);
-    const [activeTab, setActiveTab] = useState<'details' | 'consumption'>('details');
+    const [activeTab, setActiveTab] = useState<'details' | 'consumption' | 'bought'>('details');
 
     // Local State for PIX and Responsible form
     const [pixKey, setPixKey] = useState(participant.pix?.key || '');
@@ -154,6 +160,12 @@ function ParticipantRow({ participant, allParticipants, onSave, products, onTogg
                                 >
                                     O que consumiu?
                                 </button>
+                                <button
+                                    onClick={() => setActiveTab('bought')}
+                                    className={`flex-1 p-3 text-sm font-medium transition-colors ${activeTab === 'bought' ? 'bg-white/5 text-green-400' : 'text-charcoal-400 hover:text-white'}`}
+                                >
+                                    O que comprou?
+                                </button>
                             </div>
 
                             <div className="p-4 bg-charcoal-900/30">
@@ -214,7 +226,19 @@ function ParticipantRow({ participant, allParticipants, onSave, products, onTogg
                                             </select>
                                         </div>
 
-                                        <div className="flex justify-end gap-2 pt-2">
+                                        <div className="flex justify-between gap-2 pt-2 border-t border-white/5 mt-4">
+                                            <button
+                                                onClick={() => {
+                                                    if (confirm(`Tem certeza que deseja remover ${participant.name}? Essa ação não pode ser desfeita e pode afetar o histórico de pagamentos.`)) {
+                                                        onRemove(participant.name);
+                                                    }
+                                                }}
+                                                className="px-3 py-2 bg-red-900/20 hover:bg-red-900/40 text-red-500 font-medium rounded-lg transition-colors flex items-center gap-2 text-xs"
+                                            >
+                                                <Trash2 className="w-4 h-4" />
+                                                Remover
+                                            </button>
+
                                             <button
                                                 onClick={handleSave}
                                                 className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white font-medium rounded-lg transition-colors flex items-center gap-2 text-sm"
@@ -224,12 +248,12 @@ function ParticipantRow({ participant, allParticipants, onSave, products, onTogg
                                             </button>
                                         </div>
                                     </div>
-                                ) : (
+                                ) : activeTab === 'consumption' ? (
                                     <div className="space-y-2 max-h-[300px] overflow-y-auto custom-scrollbar pr-2">
-                                        {products.length === 0 ? (
+                                        {products.filter(p => !p.isPayment).length === 0 ? (
                                             <p className="text-xs text-charcoal-500 italic">Nenhum produto cadastrado.</p>
                                         ) : (
-                                            products.map((prod) => {
+                                            products.filter(p => !p.isPayment).map((prod) => {
                                                 const isConsumed = prod.consumers.includes(participant.name);
                                                 return (
                                                     <div key={prod.id} className="flex items-center justify-between p-2 rounded hover:bg-white/5 border border-transparent hover:border-white/5 transition-colors group">
@@ -242,6 +266,59 @@ function ParticipantRow({ participant, allParticipants, onSave, products, onTogg
                                                                 className="sr-only peer"
                                                             />
                                                             <div className="w-9 h-5 bg-charcoal-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                                                        </label>
+                                                    </div>
+                                                );
+                                            })
+                                        )}
+                                    </div>
+                                ) : (
+                                    <div className="space-y-2 max-h-[300px] overflow-y-auto custom-scrollbar pr-2">
+                                        <p className="text-xs text-charcoal-400 mb-3 bg-white/5 p-2 rounded border border-white/5 flex gap-2">
+                                            <AlertCircle className="w-4 h-4 text-ember-500 shrink-0" />
+                                            Marque os itens que <strong>{participant.name}</strong> comprou/pagou.
+                                        </p>
+                                        {products.filter(p => !p.isPayment).length === 0 ? (
+                                            <p className="text-xs text-charcoal-500 italic">Nenhum produto cadastrado.</p>
+                                        ) : (
+                                            products.filter(p => !p.isPayment).map((prod) => {
+                                                const isPayer = prod.payer === participant.name;
+                                                const otherPayer = !isPayer && prod.payer && prod.payer !== 'Unknown' && prod.payer !== '-' ? prod.payer : null;
+
+                                                return (
+                                                    <div key={prod.id} className="flex items-center justify-between p-2 rounded hover:bg-white/5 border border-transparent hover:border-white/5 transition-colors group">
+                                                        <div className="flex flex-col">
+                                                            <span className={`text-sm transition-colors max-w-[180px] truncate ${isPayer ? 'text-white' : 'text-charcoal-400'}`}>{prod.name}</span>
+                                                            {otherPayer && (
+                                                                <span className="text-[10px] text-charcoal-500 flex items-center gap-1">
+                                                                    <Users className="w-3 h-3" />
+                                                                    Pago por {otherPayer}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        <label className="relative inline-flex items-center cursor-pointer">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={isPayer}
+                                                                onChange={(e) => {
+                                                                    if (e.target.checked) {
+                                                                        if (otherPayer) {
+                                                                            if (!confirm(`Este item já está marcado como pago por ${otherPayer}. Deseja trocar para ${participant.name}?`)) {
+                                                                                return;
+                                                                            }
+                                                                        }
+                                                                        onUpdatePayer(prod.id, participant.name);
+                                                                    } else {
+                                                                        // Uncheck means removing ownership?
+                                                                        // Maybe alert that item will have no payer?
+                                                                        if (confirm("Remover este pagador? O item ficará sem dono.")) {
+                                                                            onUpdatePayer(prod.id, '-');
+                                                                        }
+                                                                    }
+                                                                }}
+                                                                className="sr-only peer"
+                                                            />
+                                                            <div className="w-9 h-5 bg-charcoal-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-green-600"></div>
                                                         </label>
                                                     </div>
                                                 );

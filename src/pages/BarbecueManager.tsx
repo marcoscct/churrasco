@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Layout } from '../components/Layout';
 import { ParticipantCard } from '../components/ParticipantCard';
@@ -34,6 +34,7 @@ export const BarbecueManager = () => {
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [debugInfo, setDebugInfo] = useState<any>(null);
 
@@ -97,6 +98,33 @@ export const BarbecueManager = () => {
   useEffect(() => {
     if (token) loadData();
   }, [token, id]);
+
+  // Handle URL Params for "Join" flow
+  useEffect(() => {
+    if (loading || participants.length === 0) return;
+
+    const editName = searchParams.get('edit');
+    const newName = searchParams.get('new');
+
+    if (newName) {
+      // Check if exists (Case insensitive lookup)
+      const match = participants.find(p => p.name.toLowerCase() === newName.toLowerCase());
+      if (match) {
+        setEditingParticipant(match.name);
+      } else {
+        // Create new
+        handleUpdateParticipant(newName);
+        setEditingParticipant(newName);
+      }
+      setIsManageParticipantsOpen(true);
+      setSearchParams({}, { replace: true });
+    } else if (editName) {
+      setEditingParticipant(editName);
+      setIsManageParticipantsOpen(true);
+      setSearchParams({}, { replace: true });
+    }
+  }, [loading, searchParams]); // removed participants to avoid loop if not handled carefully, logic relies on current snapshot which is fine if we update immediately.
+
 
   const handleAddProduct = async (data: { name: string; price: number; payer: string; consumers: string[] }) => {
     if (isSyncing) return;
@@ -339,6 +367,87 @@ export const BarbecueManager = () => {
     });
   };
 
+
+
+  const handleRemoveParticipant = (name: string) => {
+    if (isSyncing) return;
+    if (participants.length <= 1) {
+      alert("Não é possível remover o único participante.");
+      return;
+    }
+
+    setIsSyncing(true);
+
+    // Optimistic Update
+    const updatedParticipants = participants.filter(p => p.name !== name);
+    // Also remove from products? Or just leave 'x' dangling?
+    // 'x' in sheet references column. If column deleted, we fine.
+    // Local products state: Remove from consumers list.
+    const updatedProducts = products.map(p => ({
+      ...p,
+      consumers: p.consumers.filter(c => c !== name),
+      payer: p.payer === name ? '-' : p.payer
+    }));
+
+    setParticipants(updatedParticipants);
+    setProducts(updatedProducts);
+
+    import('../services/sheets').then(({ calculateStats, deleteParticipantFromSheet }) => {
+      // Recalculate
+      const pMap = new Map<string, Participant>();
+      updatedParticipants.forEach(p => pMap.set(p.name, p));
+
+      const result = calculateStats(updatedProducts, pMap, debugInfo?.sheetName);
+      setParticipants(result.participants);
+      setSettlements(result.settlements);
+      setPayments(result.payments || []); // Might remove payments involving this person
+
+      // Persist
+      if (debugInfo?.sheetName && debugInfo?.sheetId) {
+        deleteParticipantFromSheet(name, debugInfo.sheetName, debugInfo.sheetId, sheetUrl)
+          .then(() => console.log("Removed participant"))
+          .catch(err => {
+            console.error("Failed to remove participant", err);
+            alert("Erro ao remover participante da planilha.");
+            loadData();
+          })
+          .finally(() => setIsSyncing(false));
+      } else {
+        setIsSyncing(false);
+      }
+    });
+  };
+
+  const handleUpdatePayer = (productId: string, newPayer: string) => {
+    // Logic inside ManageParticipantsModal expects this
+    const targetProduct = products.find(p => p.id === productId);
+    if (!targetProduct) return;
+
+    const updatedProducts = products.map(p => {
+      if (p.id === productId) {
+        return { ...p, payer: newPayer };
+      }
+      return p;
+    });
+
+    setProducts(updatedProducts);
+
+    // Recalculate
+    import('../services/sheets').then(({ calculateStats, updateProductInSheet }) => {
+      const pMap = new Map<string, Participant>();
+      participants.forEach(p => pMap.set(p.name, p));
+
+      const result = calculateStats(updatedProducts, pMap, debugInfo?.sheetName);
+      setParticipants(result.participants);
+      setSettlements(result.settlements);
+
+      if (debugInfo?.sheetName) {
+        updateProductInSheet({ ...targetProduct, payer: newPayer }, result.participants, debugInfo.sheetName, sheetUrl)
+          .catch(err => console.error("Failed to update payer", err));
+      }
+    });
+  };
+
   const handleUpdateParticipant = (name: string, data?: { pix?: { key: string; type: string }, responsible?: string }) => {
     let found = false;
     const updated = participants.map(p => {
@@ -491,6 +600,8 @@ export const BarbecueManager = () => {
         products={products}
         initialExpandedParticipant={editingParticipant}
         onUpdate={(name, pix) => handleUpdateParticipant(name, pix as any)}
+        onRemove={handleRemoveParticipant}
+        onUpdatePayer={handleUpdatePayer}
         onToggleConsumption={(productId, participantName, isConsumed) => {
           // Optimistic Update
           const updated = products.map(p => {

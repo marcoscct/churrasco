@@ -4,6 +4,7 @@ import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Login } from './pages/Login';
 import { Dashboard } from './pages/Dashboard';
 import { BarbecueManager } from './pages/BarbecueManager';
+import { JoinPage } from './pages/JoinPage';
 import { useAuth } from './contexts/AuthContext';
 
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
@@ -35,6 +36,12 @@ function App() {
         <Route path="/churrasco/:id" element={
           <ProtectedRoute>
             <BarbecueManager />
+          </ProtectedRoute>
+        } />
+
+        <Route path="/join/:id" element={
+          <ProtectedRoute>
+            <JoinPage />
           </ProtectedRoute>
         } />
 

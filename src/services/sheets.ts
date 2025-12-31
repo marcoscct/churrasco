@@ -889,3 +889,78 @@ export async function initializeSheet(targetUrlOrId: string, _products: Product[
     return true;
 }
 
+export async function deleteParticipantFromSheet(name: string, sheetName: string, sheetId: number, customUrl?: string, accessToken?: string) {
+    const token = accessToken || await getAccessToken();
+    let spreadsheetId = DEFAULT_SPREADSHEET_ID;
+    if (customUrl) {
+        const { spreadsheetId: parsedId } = parseGoogleSheetUrl(customUrl);
+        if (parsedId) spreadsheetId = parsedId;
+    }
+
+    // 1. Delete from Main Sheet (Column)
+    const rangeHeader = `'${sheetName}'!1:1`;
+    const resH = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${rangeHeader}`, { headers: { Authorization: `Bearer ${token}` } });
+    const dataH = await resH.json();
+    const headers = dataH.values?.[0] || [];
+
+    // Find column index
+    const colIndex = headers.findIndex((h: string) => h && h.trim() === name);
+
+    if (colIndex !== -1) {
+        console.log(`Deleting participant column for ${name} at index ${colIndex}`);
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                requests: [{
+                    deleteDimension: {
+                        range: {
+                            sheetId: sheetId,
+                            dimension: "COLUMNS",
+                            startIndex: colIndex,
+                            endIndex: colIndex + 1
+                        }
+                    }
+                }]
+            })
+        });
+    } else {
+        console.warn(`Participant ${name} not found in main sheet header.`);
+    }
+
+    // 2. Delete from Participantes Tab (Row)
+    const rangePart = `'Participantes'!A:A`;
+    const resP = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${rangePart}`, { headers: { Authorization: `Bearer ${token}` } });
+    const dataP = await resP.json();
+    const rowsP = dataP.values as string[][] || [];
+
+    const rowIndex = rowsP.findIndex(row => row[0] && row[0].trim() === name);
+
+    if (rowIndex !== -1) {
+        // We need the sheetId of 'Participantes' tab
+        const metaRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}`, { headers: { Authorization: `Bearer ${token}` } });
+        const meta = await metaRes.json();
+        const partSheet = meta.sheets.find((s: any) => s.properties.title === 'Participantes');
+
+        if (partSheet) {
+            console.log(`Deleting participant row for ${name} at index ${rowIndex} in Participantes tab`);
+            await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    requests: [{
+                        deleteDimension: {
+                            range: {
+                                sheetId: partSheet.properties.sheetId,
+                                dimension: "ROWS",
+                                startIndex: rowIndex,
+                                endIndex: rowIndex + 1
+                            }
+                        }
+                    }]
+                })
+            });
+        }
+    }
+}
+
