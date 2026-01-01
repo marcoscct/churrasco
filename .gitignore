@@ -26,3 +26,4 @@ dist-ssr
 # Security
 service-account.json
 src/config/credentials.ts
+.env

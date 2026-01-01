@@ -1,10 +1,18 @@
 import * as jose from 'jose';
-import { SERVICE_ACCOUNT_CONFIG } from '../config/credentials';
+const SERVICE_ACCOUNT_CONFIG = {
+    private_key: import.meta.env.VITE_GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+    client_email: import.meta.env.VITE_GOOGLE_CLIENT_EMAIL,
+    token_uri: import.meta.env.VITE_GOOGLE_TOKEN_URI || "https://oauth2.googleapis.com/token"
+};
 
 const SCOPES = 'https://www.googleapis.com/auth/spreadsheets';
 
 export async function getAccessToken(): Promise<string> {
     try {
+        if (!SERVICE_ACCOUNT_CONFIG.private_key || !SERVICE_ACCOUNT_CONFIG.client_email) {
+            throw new Error("Missing Google Credential Environment Variables");
+        }
+
         const algorithm = 'RS256';
         const privateKey = await jose.importPKCS8(SERVICE_ACCOUNT_CONFIG.private_key, algorithm);
 
