@@ -9,16 +9,23 @@ export interface ConfirmationState {
     cancelLabel?: string;
     variant: 'danger' | 'warning' | 'default';
     onConfirm: () => void;
+    onCancel?: () => void;
 }
 
 interface ConfirmationModalProps {
     state: ConfirmationState;
     onClose: () => void;
     onConfirm: () => void;
+    onCancel?: () => void;
 }
 
-export function ConfirmationModal({ state, onClose, onConfirm }: ConfirmationModalProps) {
+export function ConfirmationModal({ state, onClose, onConfirm, onCancel }: ConfirmationModalProps) {
     if (!state.isOpen) return null;
+
+    const handleCancel = () => {
+        if (onCancel) onCancel();
+        onClose();
+    };
 
     return (
         <AnimatePresence>
@@ -28,7 +35,7 @@ export function ConfirmationModal({ state, onClose, onConfirm }: ConfirmationMod
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
                     className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-                    onClick={onClose}
+                    onClick={handleCancel}
                 />
                 <motion.div
                     initial={{ opacity: 0, scale: 0.95, y: 20 }}
@@ -49,7 +56,7 @@ export function ConfirmationModal({ state, onClose, onConfirm }: ConfirmationMod
                     </div>
                     <div className="bg-charcoal-950/50 p-4 border-t border-white/5 flex gap-3 justify-end">
                         <button
-                            onClick={onClose}
+                            onClick={handleCancel}
                             className="px-4 py-2 rounded-lg text-sm font-medium text-charcoal-300 hover:text-white hover:bg-white/5 transition-colors"
                         >
                             {state.cancelLabel || 'Cancelar'}
@@ -57,10 +64,10 @@ export function ConfirmationModal({ state, onClose, onConfirm }: ConfirmationMod
                         <button
                             onClick={onConfirm}
                             className={`px-4 py-2 rounded-lg text-sm font-bold text-white shadow-lg transition-transform active:scale-95 ${state.variant === 'danger'
-                                    ? 'bg-red-600 hover:bg-red-500 shadow-red-900/20'
-                                    : state.variant === 'warning'
-                                        ? 'bg-orange-600 hover:bg-orange-500 shadow-orange-900/20'
-                                        : 'bg-ember-600 hover:bg-ember-500 shadow-ember-900/20'
+                                ? 'bg-red-600 hover:bg-red-500 shadow-red-900/20'
+                                : state.variant === 'warning'
+                                    ? 'bg-orange-600 hover:bg-orange-500 shadow-orange-900/20'
+                                    : 'bg-ember-600 hover:bg-ember-500 shadow-ember-900/20'
                                 }`}
                         >
                             {state.confirmLabel || 'Confirmar'}

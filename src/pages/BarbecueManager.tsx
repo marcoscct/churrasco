@@ -228,7 +228,7 @@ export const BarbecueManager = () => {
     setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
   };
 
-  const handleEditProductSave = async (data: { name: string; price: number; payer: string; consumers: string[] }) => {
+  const processProductUpdate = async (data: { name: string; price: number; payer: string; consumers: string[] }) => {
     if (!editingProduct || isSyncing) return;
     setIsSyncing(true);
 
