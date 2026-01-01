@@ -669,8 +669,17 @@ export const BarbecueManager = () => {
                 onClick={() => {
                   const url = `${window.location.origin}${window.location.pathname}#/join/${id}`;
                   navigator.clipboard.writeText(url);
-                  alert("Link copiado: " + url);
+                  // Quick visual feedback
+                  const btn = document.getElementById('invite-btn');
+                  if (btn) {
+                    const originalText = btn.innerHTML;
+                    btn.innerHTML = '<span class="text-green-400 font-bold">Copiado!</span>';
+                    setTimeout(() => {
+                      btn.innerHTML = originalText;
+                    }, 2000);
+                  }
                 }}
+                id="invite-btn"
                 className="text-blue-400 hover:text-blue-300 text-xs flex items-center gap-1 px-2 py-1 rounded-md hover:bg-white/5 transition-colors border border-transparent hover:border-blue-500/20"
                 title="Copiar Link de Convite"
               >
