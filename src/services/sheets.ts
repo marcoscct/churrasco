@@ -802,15 +802,48 @@ export async function deleteProductFromSheet(product: Product, _sheetName: strin
         if (isNaN(rowNumber)) return;
         const rowIndex = rowNumber - 1;
 
-        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
+        const delRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
             method: 'POST',
             headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 requests: [{ deleteDimension: { range: { sheetId: sheetId, dimension: "ROWS", startIndex: rowIndex, endIndex: rowIndex + 1 } } }]
             })
         });
+
+        if (!delRes.ok) {
+            const errBody = await delRes.text();
+            console.error("Delete Failed", errBody);
+        }
     }
 }
+
+export async function deleteAllPaymentsFromSheet(spreadsheetId: string | null, customUrl?: string, accessToken?: string) {
+    const token = accessToken || await getAccessToken();
+    let targetSpreadsheetId = DEFAULT_SPREADSHEET_ID;
+
+    if (spreadsheetId) targetSpreadsheetId = spreadsheetId;
+    if (customUrl) {
+        const { spreadsheetId: parsedId } = parseGoogleSheetUrl(customUrl);
+        if (parsedId) targetSpreadsheetId = parsedId;
+    }
+
+    try {
+        // Clear 'Pagamentos' sheet content (keeping header)
+        // Check if sheet exists first or just try to clear range A2:E
+        const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${targetSpreadsheetId}/values/'Pagamentos'!A2:E:clear`;
+
+        await fetch(clearUrl, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}` }
+        });
+
+    } catch (e) {
+        console.error("Failed to clear all payments", e);
+        throw e;
+    }
+}
+
+
 
 export async function initializeSheet(targetUrlOrId: string, _products: Product[], _participants: Participant[], _payments: PaymentRecord[], accessToken?: string) {
     // Basic implementation for export logic if needed in future

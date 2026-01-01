@@ -15,15 +15,7 @@ interface ManageParticipantsModalProps {
     initialExpandedParticipant?: string;
 }
 
-interface ConfirmationState {
-    isOpen: boolean;
-    title: string;
-    description: string;
-    confirmLabel?: string;
-    cancelLabel?: string;
-    variant: 'danger' | 'warning' | 'default';
-    onConfirm: () => void;
-}
+import { ConfirmationModal, type ConfirmationState } from './ConfirmationModal';
 
 export function ManageParticipantsModal({ isOpen, onClose, participants, products, onUpdate, onToggleConsumption, onUpdatePayer, onRemove, initialExpandedParticipant }: ManageParticipantsModalProps) {
     if (!isOpen) return null;
@@ -93,55 +85,12 @@ export function ManageParticipantsModal({ isOpen, onClose, participants, product
             </motion.div>
 
             {/* Custom Confirmation Modal */}
-            <AnimatePresence>
-                {confirmation.isOpen && (
-                    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-                        <motion.div
-                            initial={{ opacity: 0 }}
-                            animate={{ opacity: 1 }}
-                            exit={{ opacity: 0 }}
-                            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-                            onClick={() => setConfirmation(prev => ({ ...prev, isOpen: false }))}
-                        />
-                        <motion.div
-                            initial={{ opacity: 0, scale: 0.95, y: 20 }}
-                            animate={{ opacity: 1, scale: 1, y: 0 }}
-                            exit={{ opacity: 0, scale: 0.95, y: 20 }}
-                            className="bg-charcoal-900 w-full max-w-sm rounded-xl border border-white/10 shadow-2xl relative z-10 overflow-hidden"
-                        >
-                            <div className="p-6">
-                                <div className="flex items-start gap-4">
-                                    <div className={`p-3 rounded-full shrink-0 ${confirmation.variant === 'danger' ? 'bg-red-500/10 text-red-500' : 'bg-ember-500/10 text-ember-500'}`}>
-                                        <AlertCircle className="w-6 h-6" />
-                                    </div>
-                                    <div className="flex-1">
-                                        <h3 className="text-lg font-bold text-white mb-2">{confirmation.title}</h3>
-                                        <p className="text-charcoal-300 text-sm leading-relaxed">{confirmation.description}</p>
-                                    </div>
-                                </div>
-                            </div>
-                            <div className="bg-charcoal-950/50 p-4 border-t border-white/5 flex gap-3 justify-end">
-                                <button
-                                    onClick={() => setConfirmation(prev => ({ ...prev, isOpen: false }))}
-                                    className="px-4 py-2 rounded-lg text-sm font-medium text-charcoal-300 hover:text-white hover:bg-white/5 transition-colors"
-                                >
-                                    {confirmation.cancelLabel || 'Cancelar'}
-                                </button>
-                                <button
-                                    onClick={handleConfirm}
-                                    className={`px-4 py-2 rounded-lg text-sm font-bold text-white shadow-lg transition-transform active:scale-95 ${confirmation.variant === 'danger'
-                                        ? 'bg-red-600 hover:bg-red-500 shadow-red-900/20'
-                                        : 'bg-ember-600 hover:bg-ember-500 shadow-ember-900/20'
-                                        }`}
-                                >
-                                    {confirmation.confirmLabel || 'Confirmar'}
-                                </button>
-                            </div>
-                        </motion.div>
-                    </div>
-                )}
-            </AnimatePresence>
-        </div >
+            <ConfirmationModal
+                state={confirmation}
+                onClose={() => setConfirmation(prev => ({ ...prev, isOpen: false }))}
+                onConfirm={handleConfirm}
+            />
+        </div>
     );
 }
 

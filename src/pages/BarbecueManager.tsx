@@ -23,7 +23,8 @@ import {
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import type { Product, Participant, Transaction, PaymentRecord } from '../types';
-import { fetchSpreadsheetData } from '../services/sheets';
+import { fetchSpreadsheetData, deleteAllPaymentsFromSheet } from '../services/sheets';
+import { ConfirmationModal, type ConfirmationState } from '../components/ConfirmationModal';
 
 export const BarbecueManager = () => {
   const { id } = useParams<{ id: string }>();
@@ -44,6 +45,14 @@ export const BarbecueManager = () => {
   const [isManageParticipantsOpen, setIsManageParticipantsOpen] = useState(false);
   const [editingParticipant, setEditingParticipant] = useState<string | undefined>(undefined);
   const [sheetUrl, setSheetUrl] = useState('');
+
+  const [confirmation, setConfirmation] = useState<ConfirmationState>({
+    isOpen: false,
+    title: '',
+    description: '',
+    variant: 'default',
+    onConfirm: () => { }
+  });
 
   const loadData = async (url?: string) => {
     setLoading(true);
@@ -98,7 +107,15 @@ export const BarbecueManager = () => {
 
   useEffect(() => {
     if (token) loadData();
+    if (token) loadData();
   }, [token, id]);
+
+  // Ensure sheetUrl is set if we have an ID, to show "Connected" status immediately
+  useEffect(() => {
+    if (id && !sheetUrl) {
+      setSheetUrl(`https://docs.google.com/spreadsheets/d/${id}`);
+    }
+  }, [id, sheetUrl]);
 
   // Handle URL Params for "Join" flow
   useEffect(() => {
@@ -126,6 +143,20 @@ export const BarbecueManager = () => {
     }
   }, [loading, searchParams]); // removed participants to avoid loop if not handled carefully, logic relies on current snapshot which is fine if we update immediately.
 
+
+  // Helper: Reset Payments
+  const handleResetPayments = async () => {
+    setLoading(true);
+    try {
+      await deleteAllPaymentsFromSheet(debugInfo?.sheetId ? null : id || null, sheetUrl, token!);
+      // Reload data to reflect
+      await loadData();
+    } catch (e) {
+      console.error("Failed to reset payments", e);
+      alert("Erro ao resetar pagamentos.");
+      setLoading(false);
+    }
+  };
 
   const handleAddProduct = async (data: { name: string; price: number; payer: string; consumers: string[] }) => {
     if (isSyncing) return;
@@ -251,6 +282,35 @@ export const BarbecueManager = () => {
         })
         .finally(() => setIsSyncing(false));
     });
+  };
+
+  const handleEditProductSave = async (data: { name: string; price: number; payer: string; consumers: string[] }) => {
+    if (!editingProduct || isSyncing) return;
+
+    // Check for existing payments
+    if (payments.length > 0) {
+      setConfirmation({
+        isOpen: true,
+        title: "Pagamentos em Aberto",
+        description: "Existem pagamentos registrados. Alterar este item pode distorcer o balanço. Deseja zerar os pagamentos para recalcular tudo do zero?",
+        variant: 'warning',
+        confirmLabel: 'Zerar e Salvar',
+        cancelLabel: 'Salvar sem Zerar', // This will trigger onClose, which just closes the modal.
+        onConfirm: async () => {
+          await handleResetPayments();
+          await processProductUpdate(data);
+          setConfirmation(prev => ({ ...prev, isOpen: false }));
+        },
+        onCancel: async () => { // Custom onCancel to handle "Save without Reset"
+          await processProductUpdate(data);
+          setConfirmation(prev => ({ ...prev, isOpen: false }));
+        }
+      });
+      return;
+    }
+
+    // If no payments, or user chose to save without resetting
+    processProductUpdate(data);
   };
 
   const handleAddPayment = async (payer: string, receiver: string, amount: number) => {
@@ -576,35 +636,47 @@ export const BarbecueManager = () => {
     );
   }
 
-  return (
-    <Layout onBack={() => navigate('/dashboard')}>
-      <AddProductModal
-        isOpen={isProductModalOpen}
-        onClose={() => {
-          setIsProductModalOpen(false);
-          setEditingProduct(undefined);
-        }}
-        participants={participants}
-        onAdd={handleAddProduct}
-        onEdit={handleEditProductSave}
-        productToEdit={editingProduct}
-      />
+  /*
+   INTERCEPT ManageParticipantsModal ACTIONS
+   We need to wrap the handlers passed to ManageParticipantsModal to check for payments.
+*/
 
-      {/* Modal de Gerenciar Participantes */}
-      <ManageParticipantsModal
-        isOpen={isManageParticipantsOpen}
-        onClose={() => {
-          setIsManageParticipantsOpen(false);
-          setEditingParticipant(undefined);
-        }}
-        participants={participants}
-        products={products}
-        initialExpandedParticipant={editingParticipant}
-        onUpdate={(name, pix) => handleUpdateParticipant(name, pix as any)}
-        onRemove={handleRemoveParticipant}
-        onUpdatePayer={handleUpdatePayer}
-        onToggleConsumption={(productId, participantName, isConsumed) => {
-          // Optimistic Update
+  const handleUpdatePayerWrapped = (productId: string, newPayer: string) => {
+    if (payments.length > 0) {
+      setConfirmation({
+        isOpen: true,
+        title: "Pagamentos Existentes",
+        description: "Alterar o pagador afetará os saldos. Deseja zerar os pagamentos já realizados?",
+        variant: 'warning',
+        confirmLabel: 'Zerar e Alterar',
+        cancelLabel: 'Apenas Alterar', // This will trigger onClose, which just closes the modal.
+        onConfirm: async () => {
+          await handleResetPayments();
+          handleUpdatePayer(productId, newPayer);
+          setConfirmation(prev => ({ ...prev, isOpen: false }));
+        },
+        onCancel: async () => { // Custom onCancel to handle "Just Update"
+          handleUpdatePayer(productId, newPayer);
+          setConfirmation(prev => ({ ...prev, isOpen: false }));
+        }
+      });
+      return;
+    }
+    handleUpdatePayer(productId, newPayer);
+  };
+
+  const handleToggleConsumption = (productId: string, participantName: string, isConsumed: boolean) => {
+    if (payments.length > 0) {
+      setConfirmation({
+        isOpen: true,
+        title: "Pagamentos Existentes",
+        description: "Alterar os consumidores afetará os saldos. Deseja zerar os pagamentos já realizados?",
+        variant: 'warning',
+        confirmLabel: 'Zerar e Alterar',
+        cancelLabel: 'Apenas Alterar',
+        onConfirm: async () => {
+          await handleResetPayments();
+          // Proceed with the original logic
           const updated = products.map(p => {
             if (p.id === productId) {
               const newConsumers = isConsumed
@@ -633,7 +705,109 @@ export const BarbecueManager = () => {
                 .catch(err => console.error("Failed to update consumption", err));
             }
           });
+          setConfirmation(prev => ({ ...prev, isOpen: false }));
+        },
+        onCancel: async () => {
+          // Proceed with the original logic without resetting payments
+          const updated = products.map(p => {
+            if (p.id === productId) {
+              const newConsumers = isConsumed
+                ? [...p.consumers, participantName]
+                : p.consumers.filter(c => c !== participantName);
+              return { ...p, consumers: newConsumers };
+            }
+            return p;
+          });
+          setProducts(updated);
+
+          // Update State
+          import('../services/sheets').then(({ calculateStats, updateProductInSheet }) => {
+            const pMap = new Map<string, Participant>();
+            participants.forEach(part => pMap.set(part.name, { ...part }));
+
+            const result = calculateStats(updated, pMap, debugInfo?.sheetName);
+            setParticipants(result.participants);
+            setSettlements(result.settlements);
+
+            // Persist
+            const targetProduct = updated.find(p => p.id === productId);
+            if (targetProduct && debugInfo?.sheetName) {
+              updateProductInSheet(targetProduct, result.participants, debugInfo.sheetName, sheetUrl)
+                .then(() => console.log("Updated product consumption"))
+                .catch(err => console.error("Failed to update consumption", err));
+            }
+          });
+          setConfirmation(prev => ({ ...prev, isOpen: false }));
+        }
+      });
+      return;
+    }
+
+    // Original logic if no payments exist
+    const updated = products.map(p => {
+      if (p.id === productId) {
+        const newConsumers = isConsumed
+          ? [...p.consumers, participantName]
+          : p.consumers.filter(c => c !== participantName);
+        return { ...p, consumers: newConsumers };
+      }
+      return p;
+    });
+    setProducts(updated);
+
+    // Update State
+    import('../services/sheets').then(({ calculateStats, updateProductInSheet }) => {
+      const pMap = new Map<string, Participant>();
+      participants.forEach(part => pMap.set(part.name, { ...part }));
+
+      const result = calculateStats(updated, pMap, debugInfo?.sheetName);
+      setParticipants(result.participants);
+      setSettlements(result.settlements);
+
+      // Persist
+      const targetProduct = updated.find(p => p.id === productId);
+      if (targetProduct && debugInfo?.sheetName) {
+        updateProductInSheet(targetProduct, result.participants, debugInfo.sheetName, sheetUrl)
+          .then(() => console.log("Updated product consumption"))
+          .catch(err => console.error("Failed to update consumption", err));
+      }
+    });
+  };
+
+  return (
+    <div className="min-h-screen bg-charcoal-950 pb-20 md:pb-0 relative">
+      <ConfirmationModal
+        state={confirmation}
+        onClose={() => setConfirmation(prev => ({ ...prev, isOpen: false }))}
+        onConfirm={confirmation.onConfirm}
+        onCancel={confirmation.onCancel} // Pass the custom onCancel handler
+      />
+      <AddProductModal
+        isOpen={isProductModalOpen}
+        onClose={() => {
+          setIsProductModalOpen(false);
+          setEditingProduct(undefined);
         }}
+        participants={participants}
+        onAdd={handleAddProduct}
+        onEdit={handleEditProductSave}
+        productToEdit={editingProduct}
+      />
+
+      {/* Modal de Gerenciar Participantes */}
+      <ManageParticipantsModal
+        isOpen={isManageParticipantsOpen}
+        onClose={() => {
+          setIsManageParticipantsOpen(false);
+          setEditingParticipant(undefined);
+        }}
+        participants={participants}
+        products={products}
+        initialExpandedParticipant={editingParticipant}
+        onUpdate={(name, pix) => handleUpdateParticipant(name, pix as any)}
+        onRemove={handleRemoveParticipant}
+        onUpdatePayer={handleUpdatePayerWrapped}
+        onToggleConsumption={handleToggleConsumption}
       />
 
       {/* Sheet Input */}
@@ -907,7 +1081,7 @@ export const BarbecueManager = () => {
         </div>
       </div>
 
-    </Layout>
+    </div>
   );
 }
 
@@ -930,7 +1104,7 @@ const Section = ({ title, icon, isExpanded, onToggle, children }: any) => {
             e.stopPropagation();
             onToggle();
           }}
-          className="p-2 hover:bg-white/10 rounded-lg transition-colors text-charcoal-400"
+          className="p-2 hover:bg-white/10 rounded-lg text-charcoal-400"
         >
           {isExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
         </button>
