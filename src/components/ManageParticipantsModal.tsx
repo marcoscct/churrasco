@@ -8,7 +8,7 @@ interface ManageParticipantsModalProps {
     onClose: () => void;
     participants: Participant[];
     products: Product[];
-    onUpdate: (name: string, data?: { pix?: { key: string; type: string }, responsible?: string }) => void;
+    onUpdate: (name: string, data?: { pix?: Participant['pix'], responsible?: string }) => void;
     onToggleConsumption: (productId: string, participantName: string, isConsumed: boolean) => void;
     onUpdatePayer: (productId: string, newPayer: string) => void;
     onRemove: (name: string) => void;
@@ -97,7 +97,7 @@ export function ManageParticipantsModal({ isOpen, onClose, participants, product
 function ParticipantRow({ participant, allParticipants, onSave, products, onToggleConsumption, onUpdatePayer, onRemove, onRequestConfirmation, defaultExpanded }: {
     participant: Participant,
     allParticipants: Participant[],
-    onSave: (data: { pix: { key: string, type: string }, responsible: string }) => void,
+    onSave: (data: { pix: NonNullable<Participant['pix']>, responsible: string }) => void,
     products: Product[],
     onToggleConsumption: (pid: string, pname: string, val: boolean) => void,
     onUpdatePayer: (pid: string, newPayer: string) => void,

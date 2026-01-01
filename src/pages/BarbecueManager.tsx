@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Layout } from '../components/Layout';
@@ -22,7 +22,7 @@ import {
   Share2
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
-import type { Product, Participant, Transaction, PaymentRecord } from '../types';
+import type { Product, Participant, Transaction, PaymentRecord, SheetData } from '../types';
 import { fetchSpreadsheetData, deleteAllPaymentsFromSheet } from '../services/sheets';
 import { ConfirmationModal, type ConfirmationState } from '../components/ConfirmationModal';
 
@@ -35,10 +35,11 @@ export const BarbecueManager = () => {
   const [settlements, setSettlements] = useState<Transaction[]>([]);
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isSyncing, setIsSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const [debugInfo, setDebugInfo] = useState<any>(null);
+  const [debugInfo, setDebugInfo] = useState<SheetData['debugInfo'] | null>(null);
 
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | undefined>(undefined);
@@ -54,7 +55,7 @@ export const BarbecueManager = () => {
     onConfirm: () => { }
   });
 
-  const loadData = async (url?: string) => {
+  const loadData = useCallback(async (url?: string) => {
     setLoading(true);
     setError(null);
     try {
@@ -95,7 +96,7 @@ export const BarbecueManager = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [id, sheetUrl, token, products, participants, payments]);
 
   const handleDisconnect = () => {
     setSheetUrl('');
@@ -107,8 +108,7 @@ export const BarbecueManager = () => {
 
   useEffect(() => {
     if (token) loadData();
-    if (token) loadData();
-  }, [token, id]);
+  }, [token, id, loadData]);
 
   // Ensure sheetUrl is set if we have an ID, to show "Connected" status immediately
   useEffect(() => {
@@ -216,7 +216,7 @@ export const BarbecueManager = () => {
   };
 
   /* Logic Updates */
-  const [isSyncing, setIsSyncing] = useState(false);
+
 
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     settlements: true,
@@ -276,11 +276,15 @@ export const BarbecueManager = () => {
       setPayments(result.payments || []);
 
       // PERSIST to Sheet
-      updateProductInSheet(productToSave, result.participants, debugInfo?.sheetName, sheetUrl)
-        .catch(err => {
-          console.error("Failed to update product in sheet", err);
-        })
-        .finally(() => setIsSyncing(false));
+      if (debugInfo?.sheetName) {
+        updateProductInSheet(productToSave, result.participants, debugInfo.sheetName, sheetUrl)
+          .catch(err => {
+            console.error("Failed to update product in sheet", err);
+          })
+          .finally(() => setIsSyncing(false));
+      } else {
+        setIsSyncing(false);
+      }
     });
   };
 
@@ -428,6 +432,79 @@ export const BarbecueManager = () => {
     });
   };
 
+  const performProductDeletion = (product: Product, shouldResetPayments: boolean) => {
+    setIsSyncing(true);
+
+    const updatedProducts = products.filter(p => p.id !== product.id);
+    setProducts(updatedProducts);
+
+    import('../services/sheets').then(({ calculateStats, deleteProductFromSheet }) => {
+      const pMap = new Map<string, Participant>();
+      const currentParticipants = participants.map(p => ({ ...p }));
+      currentParticipants.forEach(p => pMap.set(p.name, p));
+
+      // Determine payments to use
+      const currentPayments = shouldResetPayments ? [] : payments;
+
+      // Reconstruct Payments for Calculation
+      const paymentItems = currentPayments.map(pay => ({
+        id: pay.id,
+        name: 'Pagamento',
+        price: pay.amount,
+        payer: pay.from,
+        consumers: [pay.to],
+        isPayment: true
+      } as Product));
+
+      const allItems = [...updatedProducts, ...paymentItems];
+
+      const result = calculateStats(allItems, pMap, debugInfo?.sheetName);
+      setParticipants(result.participants);
+      setSettlements(result.settlements);
+      setPayments(result.payments || []);
+
+      if (debugInfo?.sheetName && debugInfo?.sheetId) {
+        deleteProductFromSheet(product, debugInfo.sheetName, debugInfo.sheetId, sheetUrl)
+          .then(() => console.log("Product deleted successfully"))
+          .catch(err => {
+            console.error("Failed to delete product", err);
+            alert("Erro ao remover produto da planilha.");
+            loadData();
+          })
+          .finally(() => setIsSyncing(false));
+      } else {
+        setIsSyncing(false);
+      }
+    });
+  };
+
+  const handleDeleteProduct = async (product: Product) => {
+    if (isSyncing) return;
+
+    if (payments.length > 0) {
+      setConfirmation({
+        isOpen: true,
+        title: "Pagamentos Existentes",
+        description: "Excluir este item afetará os saldos. Deseja zerar os pagamentos já realizados?",
+        variant: 'warning',
+        confirmLabel: 'Zerar e Excluir',
+        cancelLabel: 'Apenas Excluir',
+        onConfirm: async () => {
+          await handleResetPayments();
+          performProductDeletion(product, true);
+          setConfirmation(prev => ({ ...prev, isOpen: false }));
+        },
+        onCancel: async () => {
+          performProductDeletion(product, false);
+          setConfirmation(prev => ({ ...prev, isOpen: false }));
+        }
+      });
+      return;
+    }
+
+    performProductDeletion(product, false);
+  };
+
 
 
   const handleRemoveParticipant = (name: string) => {
@@ -509,7 +586,7 @@ export const BarbecueManager = () => {
     });
   };
 
-  const handleUpdateParticipant = (name: string, data?: { pix?: { key: string; type: string }, responsible?: string }) => {
+  const handleUpdateParticipant = (name: string, data?: { pix?: Participant['pix'], responsible?: string }) => {
     let found = false;
     const updated = participants.map(p => {
       if (p.name === name) {
@@ -556,7 +633,7 @@ export const BarbecueManager = () => {
     }
   };
 
-  const totalCost = products.filter(p => !p.isPayment).reduce((acc, p) => acc + p.price, 0);
+  const totalCost = products.reduce((acc, p) => acc + (p.isPayment || (typeof p.id === 'string' && p.id.startsWith('pay-')) ? 0 : p.price), 0);
 
   if (loading) {
     return (
@@ -775,313 +852,229 @@ export const BarbecueManager = () => {
   };
 
   return (
-    <div className="min-h-screen bg-charcoal-950 pb-20 md:pb-0 relative">
-      <ConfirmationModal
-        state={confirmation}
-        onClose={() => setConfirmation(prev => ({ ...prev, isOpen: false }))}
-        onConfirm={confirmation.onConfirm}
-        onCancel={confirmation.onCancel} // Pass the custom onCancel handler
-      />
-      <AddProductModal
-        isOpen={isProductModalOpen}
-        onClose={() => {
-          setIsProductModalOpen(false);
-          setEditingProduct(undefined);
-        }}
-        participants={participants}
-        onAdd={handleAddProduct}
-        onEdit={handleEditProductSave}
-        productToEdit={editingProduct}
-      />
-
-      {/* Modal de Gerenciar Participantes */}
-      <ManageParticipantsModal
-        isOpen={isManageParticipantsOpen}
-        onClose={() => {
-          setIsManageParticipantsOpen(false);
-          setEditingParticipant(undefined);
-        }}
-        participants={participants}
-        products={products}
-        initialExpandedParticipant={editingParticipant}
-        onUpdate={(name, pix) => handleUpdateParticipant(name, pix as any)}
-        onRemove={handleRemoveParticipant}
-        onUpdatePayer={handleUpdatePayerWrapped}
-        onToggleConsumption={handleToggleConsumption}
-      />
-
-      {/* Sheet Input */}
-      <div className="mb-8 p-4 glass-panel rounded-xl border border-white/5 bg-charcoal-900/40">
-        <label className="block text-xs font-bold text-charcoal-400 mb-2 uppercase tracking-widest">Importar do Google Sheets</label>
-        <div className="flex flex-col md:flex-row gap-3">
-          <input
-            type="text"
-            value={sheetUrl}
-            onChange={(e) => setSheetUrl(e.target.value)}
-            placeholder="Cole o link da planilha aqui..."
-            className="w-full bg-charcoal-950/80 border border-charcoal-700/50 rounded-xl px-4 py-3 text-white placeholder-charcoal-600 focus:outline-none focus:border-ember-500/50 focus:ring-1 focus:ring-ember-500/50 transition-all shadow-inner"
-          />
-          <button
-            onClick={() => loadData(sheetUrl)}
-            className="w-full md:w-auto px-6 py-3 bg-charcoal-800 hover:bg-charcoal-700 text-white font-medium rounded-xl transition-all shadow-lg shadow-charcoal-900/20 border border-white/5 active:scale-95 flex items-center justify-center gap-2"
-          >
-            {loading ? <RefreshCw className="w-5 h-5 animate-spin" /> : "Carregar"}
-          </button>
-        </div>
-
-        {/* Connection Status Indicator */}
-        {sheetUrl && debugInfo?.sheetName && (
-          <div className="mt-3 flex items-center justify-between bg-green-500/10 border border-green-500/20 rounded-lg px-4 py-2">
-            <div className="flex items-center gap-2 overflow-hidden">
-              <div className="w-2 h-2 rounded-full bg-green-500 shrink-0 animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.6)]" />
-              <span className="text-green-400 text-sm font-medium truncate">
-                Vinculado: <span className="text-white font-bold">{debugInfo.sheetName}</span>
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => {
-                  const url = `${window.location.origin}${window.location.pathname}#/join/${id}`;
-                  navigator.clipboard.writeText(url);
-                  // Quick visual feedback
-                  const btn = document.getElementById('invite-btn');
-                  if (btn) {
-                    const originalText = btn.innerHTML;
-                    btn.innerHTML = '<span class="text-green-400 font-bold">Copiado!</span>';
-                    setTimeout(() => {
-                      btn.innerHTML = originalText;
-                    }, 2000);
-                  }
-                }}
-                id="invite-btn"
-                className="text-blue-400 hover:text-blue-300 text-xs flex items-center gap-1 px-2 py-1 rounded-md hover:bg-white/5 transition-colors border border-transparent hover:border-blue-500/20"
-                title="Copiar Link de Convite"
-              >
-                <Share2 className="w-3 h-3" />
-                Convidar
-              </button>
-              <button
-                onClick={handleDisconnect}
-                className="text-charcoal-400 hover:text-red-400 text-xs flex items-center gap-1 px-2 py-1 rounded-md hover:bg-white/5 transition-colors border border-transparent hover:border-red-500/20"
-                title="Desvincular Planilha"
-              >
-                <Trash2 className="w-3 h-3" />
-                Desvincular
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Overview Cards - Mobile: Grid 2 cols (Cost takes full width? Or compact 2 cols) */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-6 mb-8 md:mb-10">
-        <div className="col-span-2 md:col-span-1 glass-panel p-5 md:p-6 rounded-2xl flex items-center gap-4 relative overflow-hidden group">
-          <div className="absolute -right-4 -top-4 w-24 h-24 bg-ember-500/10 rounded-full blur-2xl group-hover:bg-ember-500/20 transition-all" />
-          <div className="p-3 bg-charcoal-800 rounded-xl shrink-0">
-            <DollarSign className="w-6 h-6 text-ember-400" />
-          </div>
-          <div>
-            <p className="text-charcoal-400 text-xs md:text-sm font-medium uppercase tracking-wider">Custo Total</p>
-            <p className="text-xl md:text-2xl font-bold text-white">R$ {totalCost.toFixed(2)}</p>
-          </div>
-        </div>
-
-        <div className="glass-panel p-4 md:p-6 rounded-2xl flex items-center gap-3 md:gap-4 relative overflow-hidden group">
-          <div className="absolute -right-4 -top-4 w-20 h-20 bg-blue-500/10 rounded-full blur-2xl group-hover:bg-blue-500/20 transition-all" />
-          <div className="p-2 md:p-3 bg-charcoal-800 rounded-xl shrink-0">
-            <Users className="w-5 h-5 md:w-6 md:h-6 text-blue-400" />
-          </div>
-          <div>
-            <p className="text-charcoal-400 text-xs md:text-sm font-medium">Participantes</p>
-            <p className="text-lg md:text-2xl font-bold text-white leading-none">{participants.length}</p>
-          </div>
-        </div>
-
-        <div className="glass-panel p-4 md:p-6 rounded-2xl flex items-center gap-3 md:gap-4 relative overflow-hidden group">
-          <div className="absolute -right-4 -top-4 w-20 h-20 bg-green-500/10 rounded-full blur-2xl group-hover:bg-green-500/20 transition-all" />
-          <div className="p-2 md:p-3 bg-charcoal-800 rounded-xl shrink-0">
-            <ShoppingBag className="w-5 h-5 md:w-6 md:h-6 text-green-400" />
-          </div>
-          <div>
-            <p className="text-charcoal-400 text-xs md:text-sm font-medium">Produtos</p>
-            <p className="text-lg md:text-2xl font-bold text-white leading-none">{products.length}</p>
-          </div>
-        </div>
-      </div>
-
-      {/* Mobile Fixed Action Bar (Bottom) */}
-      <div className="md:hidden fixed bottom-0 left-0 right-0 p-4 bg-charcoal-950/80 backdrop-blur-xl border-t border-white/10 z-40 flex gap-3 pb-8">
-        <button
-          onClick={() => {
+    <Layout onBack={() => navigate('/dashboard')}>
+      <div className="min-h-screen bg-charcoal-950 pb-20 md:pb-0 relative">
+        <ConfirmationModal
+          state={confirmation}
+          onClose={() => setConfirmation(prev => ({ ...prev, isOpen: false }))}
+          onConfirm={confirmation.onConfirm}
+          onCancel={confirmation.onCancel} // Pass the custom onCancel handler
+        />
+        <AddProductModal
+          isOpen={isProductModalOpen}
+          onClose={() => {
+            setIsProductModalOpen(false);
             setEditingProduct(undefined);
-            setIsProductModalOpen(true);
           }}
-          className="flex-1 py-3.5 bg-gradient-to-r from-ember-600 to-red-600 text-white font-bold rounded-xl shadow-lg shadow-ember-900/40 flex items-center justify-center gap-2 active:scale-95 transition-transform"
-        >
-          <Plus className="w-5 h-5" />
-          Add Produto
-        </button>
-        <button
-          onClick={() => setIsManageParticipantsOpen(true)}
-          className="flex-1 py-3.5 bg-charcoal-800 text-white font-semibold rounded-xl border border-white/5 flex items-center justify-center gap-2 active:scale-95 transition-transform"
-        >
-          <Users className="w-5 h-5" />
-          Participantes
-        </button>
-      </div>
+          participants={participants}
+          onAdd={handleAddProduct}
+          onEdit={handleEditProductSave}
+          productToEdit={editingProduct}
+        />
 
-      {/* Desktop Actions */}
-      <div className="hidden md:flex flex-wrap gap-4 mb-8">
-        <button
-          onClick={() => {
-            setEditingProduct(undefined);
-            setIsProductModalOpen(true);
-          }}
-          className="px-6 py-3 bg-gradient-to-r from-ember-600 to-red-600 hover:from-ember-500 hover:to-red-500 text-white font-semibold rounded-xl shadow-lg shadow-ember-900/20 transition-all flex items-center justify-center gap-2 transform hover:-translate-y-0.5 active:translate-y-0 text-shadow"
-        >
-          <Plus className="w-5 h-5" />
-          Adicionar Produto
-        </button>
-        <button
-          onClick={() => setIsManageParticipantsOpen(true)}
-          className="px-6 py-3 glass-panel hover:bg-white/10 text-white font-semibold rounded-xl transition-all flex items-center justify-center gap-2"
-        >
-          <Users className="w-5 h-5" />
-          Participantes
-        </button>
-        <button
-          onClick={() => loadData()}
-          className="px-4 py-3 glass-panel hover:bg-white/10 text-white rounded-xl transition-all flex items-center justify-center"
-          title="Atualizar"
-        >
-          <RefreshCw className="w-5 h-5" />
-        </button>
-      </div>
-
-      {/* NEW Layout: Products (Top) / Matrix + Participants (Bottom) */}
-      <div className="flex flex-col gap-8">
-
-        {/* Top Row: Products (Full Width) */}
-        <Section
-          title="Produtos"
-          icon={<ShoppingBag className="w-5 h-5 text-blue-400" />}
-          isExpanded={expandedSections['products']}
-          onToggle={() => toggleSection('products')}
-        >
-          {products.length === 0 ? (
-            <div className="text-charcoal-500 italic p-8 text-center space-y-4">
-              <p>Nenhum produto encontrado.</p>
-            </div>
-          ) : (
-            <ProductsTable
-              products={products}
-              debugInfo={debugInfo}
-              onEdit={(p) => {
-                setEditingProduct(p);
-                setIsProductModalOpen(true);
-              }}
-              onDelete={async (p) => {
-                if (isSyncing) return;
-
-                if (confirm(`Tem certeza que deseja excluir "${p.name}"?`)) {
-                  setIsSyncing(true);
-                  // Optimistic delete
-                  const updated = products.filter(prod => prod.id !== p.id);
-                  setProducts(updated);
-
-                  // Recalculate
-                  import('../services/sheets').then(({ calculateStats, deleteProductFromSheet }) => {
-                    const pMap = new Map<string, Participant>();
-                    const currentParticipants = participants.map(part => ({ ...part }));
-                    currentParticipants.forEach(part => pMap.set(part.name, part));
-
-                    // Reconstruct Payments for Calculation
-                    const paymentItems = payments.map(pay => ({
-                      id: pay.id,
-                      name: 'Pagamento',
-                      price: pay.amount,
-                      payer: pay.from,
-                      consumers: [pay.to],
-                      isPayment: true
-                    } as Product));
-
-                    const allItems = [...updated, ...paymentItems];
-
-                    const result = calculateStats(allItems, pMap, debugInfo?.sheetName);
-                    setParticipants(result.participants);
-                    setSettlements(result.settlements);
-                    setPayments(result.payments || []);
-
-                    if (debugInfo?.sheetName && debugInfo?.sheetId) {
-                      deleteProductFromSheet(p, debugInfo.sheetName, debugInfo.sheetId, sheetUrl)
-                        .catch(err => {
-                          console.error("Failed to delete product", err);
-                          alert("Erro ao excluir produto. Recarregue a página.");
-                          loadData();
-                        })
-                        .finally(() => setIsSyncing(false));
-                    } else {
-                      setIsSyncing(false);
-                    }
-                  });
-                }
-              }}
-
+        {/* Sheet Input */}
+        <div className="bg-charcoal-900 border-b border-white/5 p-4 md:p-6 sticky top-0 md:relative z-40 backdrop-blur-md bg-opacity-90 md:bg-opacity-100">
+          <div className="max-w-7xl mx-auto flex gap-3">
+            <input
+              type="text"
+              value={sheetUrl}
+              onChange={(e) => setSheetUrl(e.target.value)}
+              placeholder="Cole o link da planilha Google aqui..."
+              className="flex-1 bg-charcoal-800 border-charcoal-700 text-white placeholder-charcoal-500 rounded-xl focus:ring-2 focus:ring-ember-500 focus:border-transparent transition-all shadow-inner"
             />
-          )}
-        </Section>
+            <button
+              onClick={() => loadData(sheetUrl)}
+              className="w-full md:w-auto px-6 py-3 bg-charcoal-800 hover:bg-charcoal-700 text-white font-medium rounded-xl transition-all shadow-lg shadow-charcoal-900/20 border border-white/5 active:scale-95 flex items-center justify-center gap-2"
+            >
+              {loading ? <RefreshCw className="w-5 h-5 animate-spin" /> : "Carregar"}
+            </button>
+          </div>
 
-        {/* Bottom Row: Matrix and Participants side-by-side on desktop */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          <Section
-            title="Plano de Pagamentos"
-            icon={<RefreshCw className="w-5 h-5 text-green-400" />}
-            isExpanded={expandedSections['settlements']}
-            onToggle={() => toggleSection('settlements')}
-          >
+          {/* Connection Status Indicator */}
+          {sheetUrl && debugInfo?.sheetName && (
+            <div className="mt-3 flex items-center justify-between bg-green-500/10 border border-green-500/20 rounded-lg px-4 py-2">
+              <div className="flex items-center gap-2 overflow-hidden">
+                <div className="w-2 h-2 rounded-full bg-green-500 shrink-0 animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.6)]" />
+                <span className="text-green-400 text-sm font-medium truncate">
+                  Vinculado: <span className="text-white font-bold">{debugInfo.sheetName}</span>
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    const url = `${window.location.origin}${window.location.pathname}#/join/${id}`;
+                    navigator.clipboard.writeText(url);
+                    // Quick visual feedback
+                    const btn = document.getElementById('invite-btn');
+                    if (btn) {
+                      const originalText = btn.innerHTML;
+                      btn.innerHTML = '<span class="text-green-400 font-bold">Copiado!</span>';
+                      setTimeout(() => {
+                        btn.innerHTML = originalText;
+                      }, 2000);
+                    }
+                  }}
+                  id="invite-btn"
+                  className="text-blue-400 hover:text-blue-300 text-xs flex items-center gap-1 px-2 py-1 rounded-md hover:bg-white/5 transition-colors border border-transparent hover:border-blue-500/20"
+                  title="Copiar Link de Convite"
+                >
+                  <Share2 className="w-3 h-3" />
+                  Convidar
+                </button>
+                <button
+                  onClick={handleDisconnect}
+                  className="text-charcoal-400 hover:text-red-400 text-xs flex items-center gap-1 px-2 py-1 rounded-md hover:bg-white/5 transition-colors border border-transparent hover:border-red-500/20"
+                  title="Desvincular Planilha"
+                >
+                  <Trash2 className="w-3 h-3" />
+                  Desvincular
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Overview Cards */}
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-6 mb-8 md:mb-10">
+          <div className="col-span-2 md:col-span-1 glass-panel p-5 md:p-6 rounded-2xl flex items-center gap-4 relative overflow-hidden group">
+            <div className="absolute -right-4 -top-4 w-24 h-24 bg-ember-500/10 rounded-full blur-2xl group-hover:bg-ember-500/20 transition-all" />
+            <div className="p-3 bg-charcoal-800 rounded-xl shrink-0">
+              <DollarSign className="w-6 h-6 text-ember-400" />
+            </div>
+            <div>
+              <p className="text-charcoal-400 text-xs font-bold uppercase tracking-wider mb-1">Custo Total</p>
+              <p className="text-2xl font-bold text-white tracking-tight">
+                {loading ? (
+                  <span className="animate-pulse bg-charcoal-700 h-8 w-24 rounded block" />
+                ) : (
+                  `R$ ${totalCost.toFixed(2)}`
+                )}
+              </p>
+            </div>
+          </div>
+
+          <div className="glass-panel p-5 md:p-6 rounded-2xl flex items-center gap-4 relative overflow-hidden group">
+            <div className="absolute -right-4 -top-4 w-24 h-24 bg-blue-500/10 rounded-full blur-2xl group-hover:bg-blue-500/20 transition-all" />
+            <div className="p-3 bg-charcoal-800 rounded-xl shrink-0">
+              <Users className="w-6 h-6 text-blue-400" />
+            </div>
+            <div>
+              <p className="text-charcoal-400 text-xs font-bold uppercase tracking-wider mb-1">Participantes</p>
+              <p className="text-2xl font-bold text-white tracking-tight">
+                {loading ? <span className="animate-pulse bg-charcoal-700 h-8 w-12 rounded block" /> : participants.length}
+              </p>
+            </div>
+          </div>
+
+          <div className="glass-panel p-5 md:p-6 rounded-2xl flex items-center gap-4 relative overflow-hidden group">
+            <div className="absolute -right-4 -top-4 w-24 h-24 bg-green-500/10 rounded-full blur-2xl group-hover:bg-green-500/20 transition-all" />
+            <div className="p-3 bg-charcoal-800 rounded-xl shrink-0">
+              <ShoppingBag className="w-6 h-6 text-green-400" />
+            </div>
+            <div>
+              <p className="text-charcoal-400 text-xs font-bold uppercase tracking-wider mb-1">Itens</p>
+              <p className="text-2xl font-bold text-white tracking-tight">
+                {loading ? <span className="animate-pulse bg-charcoal-700 h-8 w-12 rounded block" /> : products.filter(p => !p.isPayment && !p.id.toString().startsWith('pay-')).length}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 md:gap-8">
+          {/* Left Column: Settlements Matrix */}
+          <div className="space-y-6">
             <SettlementMatrix
               settlements={settlements}
               participants={participants}
               payments={payments}
               onAddPayment={handleAddPayment}
               onDeletePayment={handleDeletePayment}
-            // No need for setSettlements here unless we want to drag/drop the CENTRALIZED list, which is tricky.
-            // Disabling reorder for centralized view implicitly.
+              isSyncing={isSyncing}
             />
-          </Section>
+          </div>
 
-          <Section
-            title="Participantes"
-            icon={<Users className="w-5 h-5 text-ember-400" />}
-            isExpanded={expandedSections['participants']}
-            onToggle={() => toggleSection('participants')}
-          >
-            <div className="space-y-3">
-              {participants.map((participant) => (
-                <ParticipantCard
-                  key={participant.name}
-                  participant={participant}
-                  products={products}
-                  onEdit={() => {
-                    setEditingParticipant(participant.name);
-                    setIsManageParticipantsOpen(true);
-                  }}
-                />
-              ))}
-              <div className="pt-4 mt-4 border-t border-white/5">
+          {/* Right Column: Details */}
+          <div className="space-y-6">
+            <Section
+              title="Itens do Churrasco"
+              icon={<ShoppingBag className="w-5 h-5 text-green-400" />}
+              isExpanded={expandedSections['products']}
+              onToggle={() => toggleSection('products')}
+            >
+              <div className="mb-4">
                 <button
-                  onClick={() => setIsManageParticipantsOpen(true)}
-                  className="w-full py-2 bg-charcoal-800 hover:bg-charcoal-700 text-charcoal-300 hover:text-white rounded-lg transition-colors text-sm font-medium border border-dashed border-charcoal-600 hover:border-white/20"
+                  onClick={() => {
+                    setEditingProduct(undefined);
+                    setIsProductModalOpen(true);
+                  }}
+                  className="w-full py-3 bg-ember-600 hover:bg-ember-500 text-white rounded-xl transition-all shadow-lg shadow-ember-900/20 font-bold flex items-center justify-center gap-2 active:scale-95 group"
                 >
-                  Gerenciar Participantes...
+                  <div className="bg-white/20 p-1 rounded-full group-hover:bg-white/30 transition-colors">
+                    <Plus className="w-4 h-4" />
+                  </div>
+                  Adicionar Item/Bebida
                 </button>
               </div>
-            </div>
-          </Section>
-        </div>
-      </div>
 
-    </div>
+              <ProductsTable
+                products={products}
+                debugInfo={debugInfo}
+                onEdit={(p) => {
+                  setEditingProduct(p);
+                  setIsProductModalOpen(true);
+                }}
+                onDelete={handleDeleteProduct}
+              />
+            </Section>
+
+            <Section
+              title="Participantes"
+              icon={<Users className="w-5 h-5 text-ember-400" />}
+              isExpanded={expandedSections['participants']}
+              onToggle={() => toggleSection('participants')}
+            >
+              <div className="space-y-3">
+                {participants.map((participant) => (
+                  <ParticipantCard
+                    key={participant.name}
+                    participant={participant}
+                    products={products}
+                    onEdit={() => {
+                      setEditingParticipant(participant.name);
+                      setIsManageParticipantsOpen(true);
+                    }}
+                  />
+                ))}
+                <div className="pt-4 mt-4 border-t border-white/5">
+                  <button
+                    onClick={() => setIsManageParticipantsOpen(true)}
+                    className="w-full py-2 bg-charcoal-800 hover:bg-charcoal-700 text-charcoal-300 hover:text-white rounded-lg transition-colors text-sm font-medium border border-dashed border-charcoal-600 hover:border-white/20"
+                  >
+                    Gerenciar Participantes...
+                  </button>
+                </div>
+              </div>
+            </Section>
+          </div>
+        </div>
+
+        <ManageParticipantsModal
+          isOpen={isManageParticipantsOpen}
+          onClose={() => {
+            setIsManageParticipantsOpen(false);
+            setEditingParticipant(undefined);
+            setSearchParams({});
+          }}
+          participants={participants}
+          products={products}
+          onUpdate={handleUpdateParticipant}
+          onToggleConsumption={handleToggleConsumption}
+          onUpdatePayer={handleUpdatePayerWrapped}
+          onRemove={handleRemoveParticipant}
+          initialExpandedParticipant={editingParticipant}
+        />
+      </div>
+    </Layout >
   );
 }
 
@@ -1132,7 +1125,7 @@ const Section = ({ title, icon, isExpanded, onToggle, children }: any) => {
   );
 };
 
-const ProductsTable = ({ products, debugInfo, onEdit, onDelete }: { products: any[], debugInfo: any, onEdit: (p: any) => void, onDelete: (p: any) => void }) => {
+const ProductsTable = ({ products, debugInfo, onEdit, onDelete }: { products: Product[], debugInfo: SheetData['debugInfo'] | null, onEdit: (p: Product) => void, onDelete: (p: Product) => void }) => {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
 
   // Close menu on click outside
