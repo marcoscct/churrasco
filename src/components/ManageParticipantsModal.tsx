@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, Save, Users, ChevronDown, ChevronUp, Plus, Trash2, AlertTriangle, AlertCircle } from 'lucide-react';
+import { X, Save, Users, ChevronDown, ChevronUp, Plus, Trash2, AlertCircle } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import type { Participant, Product } from '../types';
 
@@ -67,7 +67,7 @@ export function ManageParticipantsModal({ isOpen, onClose, participants, product
     );
 }
 
-function ParticipantRow({ participant, allParticipants, onSave, products, onToggleConsumption, defaultExpanded }: {
+function ParticipantRow({ participant, allParticipants, onSave, products, onToggleConsumption, onUpdatePayer, onRemove, defaultExpanded }: {
     participant: Participant,
     allParticipants: Participant[],
     onSave: (data: { pix: { key: string, type: string }, responsible: string }) => void,
