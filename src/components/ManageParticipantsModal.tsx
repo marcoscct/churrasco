@@ -15,11 +15,38 @@ interface ManageParticipantsModalProps {
     initialExpandedParticipant?: string;
 }
 
+interface ConfirmationState {
+    isOpen: boolean;
+    title: string;
+    description: string;
+    confirmLabel?: string;
+    cancelLabel?: string;
+    variant: 'danger' | 'warning' | 'default';
+    onConfirm: () => void;
+}
+
 export function ManageParticipantsModal({ isOpen, onClose, participants, products, onUpdate, onToggleConsumption, onUpdatePayer, onRemove, initialExpandedParticipant }: ManageParticipantsModalProps) {
     if (!isOpen) return null;
 
     // Get list of all participants for the responsible selector
     const allParticipants = participants;
+
+    const [confirmation, setConfirmation] = useState<ConfirmationState>({
+        isOpen: false,
+        title: '',
+        description: '',
+        variant: 'default',
+        onConfirm: () => { }
+    });
+
+    const requestConfirmation = (config: Omit<ConfirmationState, 'isOpen'>) => {
+        setConfirmation({ ...config, isOpen: true });
+    };
+
+    const handleConfirm = () => {
+        confirmation.onConfirm();
+        setConfirmation(prev => ({ ...prev, isOpen: false }));
+    };
 
     return (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -51,6 +78,7 @@ export function ManageParticipantsModal({ isOpen, onClose, participants, product
                                 onToggleConsumption={onToggleConsumption}
                                 onUpdatePayer={onUpdatePayer}
                                 onRemove={onRemove}
+                                onRequestConfirmation={requestConfirmation}
                                 defaultExpanded={initialExpandedParticipant === p.name}
                             />
                         ))}
@@ -63,11 +91,61 @@ export function ManageParticipantsModal({ isOpen, onClose, participants, product
                     </div>
                 </div>
             </motion.div>
-        </div>
+
+            {/* Custom Confirmation Modal */}
+            <AnimatePresence>
+                {confirmation.isOpen && (
+                    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+                        <motion.div
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+                            onClick={() => setConfirmation(prev => ({ ...prev, isOpen: false }))}
+                        />
+                        <motion.div
+                            initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                            animate={{ opacity: 1, scale: 1, y: 0 }}
+                            exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                            className="bg-charcoal-900 w-full max-w-sm rounded-xl border border-white/10 shadow-2xl relative z-10 overflow-hidden"
+                        >
+                            <div className="p-6">
+                                <div className="flex items-start gap-4">
+                                    <div className={`p-3 rounded-full shrink-0 ${confirmation.variant === 'danger' ? 'bg-red-500/10 text-red-500' : 'bg-ember-500/10 text-ember-500'}`}>
+                                        <AlertCircle className="w-6 h-6" />
+                                    </div>
+                                    <div className="flex-1">
+                                        <h3 className="text-lg font-bold text-white mb-2">{confirmation.title}</h3>
+                                        <p className="text-charcoal-300 text-sm leading-relaxed">{confirmation.description}</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="bg-charcoal-950/50 p-4 border-t border-white/5 flex gap-3 justify-end">
+                                <button
+                                    onClick={() => setConfirmation(prev => ({ ...prev, isOpen: false }))}
+                                    className="px-4 py-2 rounded-lg text-sm font-medium text-charcoal-300 hover:text-white hover:bg-white/5 transition-colors"
+                                >
+                                    {confirmation.cancelLabel || 'Cancelar'}
+                                </button>
+                                <button
+                                    onClick={handleConfirm}
+                                    className={`px-4 py-2 rounded-lg text-sm font-bold text-white shadow-lg transition-transform active:scale-95 ${confirmation.variant === 'danger'
+                                        ? 'bg-red-600 hover:bg-red-500 shadow-red-900/20'
+                                        : 'bg-ember-600 hover:bg-ember-500 shadow-ember-900/20'
+                                        }`}
+                                >
+                                    {confirmation.confirmLabel || 'Confirmar'}
+                                </button>
+                            </div>
+                        </motion.div>
+                    </div>
+                )}
+            </AnimatePresence>
+        </div >
     );
 }
 
-function ParticipantRow({ participant, allParticipants, onSave, products, onToggleConsumption, onUpdatePayer, onRemove, defaultExpanded }: {
+function ParticipantRow({ participant, allParticipants, onSave, products, onToggleConsumption, onUpdatePayer, onRemove, onRequestConfirmation, defaultExpanded }: {
     participant: Participant,
     allParticipants: Participant[],
     onSave: (data: { pix: { key: string, type: string }, responsible: string }) => void,
@@ -75,6 +153,7 @@ function ParticipantRow({ participant, allParticipants, onSave, products, onTogg
     onToggleConsumption: (pid: string, pname: string, val: boolean) => void,
     onUpdatePayer: (pid: string, newPayer: string) => void,
     onRemove: (name: string) => void,
+    onRequestConfirmation: (config: Omit<ConfirmationState, 'isOpen'>) => void,
     defaultExpanded?: boolean
 }) {
     const [isExpanded, setIsExpanded] = useState(defaultExpanded || false);
@@ -229,9 +308,13 @@ function ParticipantRow({ participant, allParticipants, onSave, products, onTogg
                                         <div className="flex justify-between gap-2 pt-2 border-t border-white/5 mt-4">
                                             <button
                                                 onClick={() => {
-                                                    if (confirm(`Tem certeza que deseja remover ${participant.name}? Essa ação não pode ser desfeita e pode afetar o histórico de pagamentos.`)) {
-                                                        onRemove(participant.name);
-                                                    }
+                                                    onRequestConfirmation({
+                                                        title: "Remover Participante",
+                                                        description: `Tem certeza que deseja remover ${participant.name}? Essa ação não pode ser desfeita e pode afetar o histórico de pagamentos.`,
+                                                        variant: 'danger',
+                                                        confirmLabel: 'Sim, remover',
+                                                        onConfirm: () => onRemove(participant.name)
+                                                    });
                                                 }}
                                                 className="px-3 py-2 bg-red-900/20 hover:bg-red-900/40 text-red-500 font-medium rounded-lg transition-colors flex items-center gap-2 text-xs"
                                             >
@@ -303,17 +386,25 @@ function ParticipantRow({ participant, allParticipants, onSave, products, onTogg
                                                                 onChange={(e) => {
                                                                     if (e.target.checked) {
                                                                         if (otherPayer) {
-                                                                            if (!confirm(`Este item já está marcado como pago por ${otherPayer}. Deseja trocar para ${participant.name}?`)) {
-                                                                                return;
-                                                                            }
+                                                                            onRequestConfirmation({
+                                                                                title: "Trocar Pagador",
+                                                                                description: `Este item já está marcado como pago por ${otherPayer}. Deseja trocar para ${participant.name}?`,
+                                                                                variant: 'warning',
+                                                                                confirmLabel: 'Trocar',
+                                                                                onConfirm: () => onUpdatePayer(prod.id, participant.name)
+                                                                            });
+                                                                        } else {
+                                                                            onUpdatePayer(prod.id, participant.name);
                                                                         }
-                                                                        onUpdatePayer(prod.id, participant.name);
                                                                     } else {
                                                                         // Uncheck means removing ownership?
-                                                                        // Maybe alert that item will have no payer?
-                                                                        if (confirm("Remover este pagador? O item ficará sem dono.")) {
-                                                                            onUpdatePayer(prod.id, '-');
-                                                                        }
+                                                                        onRequestConfirmation({
+                                                                            title: "Remover Pagador",
+                                                                            description: "Remover este pagador? O item ficará sem dono.",
+                                                                            variant: 'warning',
+                                                                            confirmLabel: 'Remover',
+                                                                            onConfirm: () => onUpdatePayer(prod.id, '-')
+                                                                        });
                                                                     }
                                                                 }}
                                                                 className="sr-only peer"
