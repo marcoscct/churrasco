@@ -22,7 +22,9 @@ export async function listMockBarbecues(token: string): Promise<DriveFile[]> {
     });
 
     if (!response.ok) {
-        throw new Error('Failed to list files');
+        const errData = await response.json().catch(() => ({}));
+        console.error('Drive API Error (list):', response.status, errData);
+        throw new Error(errData.error?.message || 'Failed to list files');
     }
 
     const data = await response.json();
@@ -48,7 +50,9 @@ export async function createBarbecue(name: string, token: string): Promise<strin
     });
 
     if (!response.ok) {
-        throw new Error('Failed to create file');
+        const errData = await response.json().catch(() => ({}));
+        console.error('Drive API Error (create):', response.status, errData);
+        throw new Error(errData.error?.message || 'Failed to create file');
     }
 
     const data = await response.json();
@@ -74,6 +78,8 @@ export async function signFile(fileId: string, token: string): Promise<void> {
     });
 
     if (!response.ok) {
-        throw new Error('Failed to sign file');
+        const errData = await response.json().catch(() => ({}));
+        console.error('Drive API Error (sign):', response.status, errData);
+        throw new Error(errData.error?.message || 'Failed to sign file');
     }
 }

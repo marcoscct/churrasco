@@ -5,7 +5,7 @@ const SERVICE_ACCOUNT_CONFIG = {
     token_uri: import.meta.env.VITE_GOOGLE_TOKEN_URI || "https://oauth2.googleapis.com/token"
 };
 
-const SCOPES = 'https://www.googleapis.com/auth/spreadsheets';
+const SCOPES = 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive';
 
 export async function getAccessToken(): Promise<string> {
     try {
