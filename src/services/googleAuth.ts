@@ -1,8 +1,13 @@
 import * as jose from 'jose';
+const cleanEnvVar = (val?: string) => {
+    if (!val) return '';
+    return val.trim().replace(/^["']|["']$/g, '');
+};
+
 const SERVICE_ACCOUNT_CONFIG = {
-    private_key: import.meta.env.VITE_GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-    client_email: import.meta.env.VITE_GOOGLE_CLIENT_EMAIL,
-    token_uri: import.meta.env.VITE_GOOGLE_TOKEN_URI || "https://oauth2.googleapis.com/token"
+    private_key: cleanEnvVar(import.meta.env.VITE_GOOGLE_PRIVATE_KEY).replace(/\\n/g, '\n'),
+    client_email: cleanEnvVar(import.meta.env.VITE_GOOGLE_CLIENT_EMAIL),
+    token_uri: cleanEnvVar(import.meta.env.VITE_GOOGLE_TOKEN_URI) || "https://oauth2.googleapis.com/token"
 };
 
 const SCOPES = 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive';

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Layout } from '../components/Layout';
@@ -41,6 +41,17 @@ export const BarbecueManager = () => {
 
   const [debugInfo, setDebugInfo] = useState<SheetData['debugInfo'] | null>(null);
 
+  // Refs to avoid infinite loops in loadData dependency array
+  const productsRef = useRef(products);
+  const participantsRef = useRef(participants);
+  const paymentsRef = useRef(payments);
+
+  useEffect(() => {
+    productsRef.current = products;
+    participantsRef.current = participants;
+    paymentsRef.current = payments;
+  }, [products, participants, payments]);
+
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | undefined>(undefined);
   const [isManageParticipantsOpen, setIsManageParticipantsOpen] = useState(false);
@@ -64,10 +75,10 @@ export const BarbecueManager = () => {
 
       // Check for Empty Sheet
       if (data.isEmpty) {
-        if (products.length > 0 && confirm("A planilha parece estar vazia. Deseja exportar os dados atuais para ela?")) {
+        if (productsRef.current.length > 0 && confirm("A planilha parece estar vazia. Deseja exportar os dados atuais para ela?")) {
           // Export Logic
           import('../services/sheets').then(({ initializeSheet }) => {
-            initializeSheet(targetUrl, products, participants, payments, token!)
+            initializeSheet(targetUrl, productsRef.current, participantsRef.current, paymentsRef.current, token!)
               .then(() => {
                 alert("Dados exportados com sucesso!");
                 loadData(targetUrl); // Reload to confirm
@@ -96,7 +107,7 @@ export const BarbecueManager = () => {
     } finally {
       setLoading(false);
     }
-  }, [id, sheetUrl, token, products, participants, payments]);
+  }, [id, sheetUrl, token]);
 
   const handleDisconnect = () => {
     setSheetUrl('');
