@@ -83,3 +83,20 @@ export async function signFile(fileId: string, token: string): Promise<void> {
         throw new Error(errData.error?.message || 'Failed to sign file');
     }
 }
+
+export async function deleteBarbecueFile(fileId: string, token: string): Promise<void> {
+    const response = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, {
+        method: 'PATCH',
+        headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ trashed: true })
+    });
+
+    if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        console.error('Drive API Error (trash):', response.status, errData);
+        throw new Error(errData.error?.message || 'Failed to trash file');
+    }
+}

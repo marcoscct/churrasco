@@ -1,7 +1,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { Plus, FolderOpen, LogOut, Flame, FileSpreadsheet, Loader2, ArrowRight } from 'lucide-react';
+import { Plus, FolderOpen, LogOut, Flame, FileSpreadsheet, Loader2, ArrowRight, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { listMockBarbecues, createBarbecue, signFile } from '../services/drive';
 import type { DriveFile } from '../services/drive';
@@ -189,7 +189,30 @@ export const Dashboard: React.FC = () => {
                                             <p className="text-xs text-slate-400">Criado em {f.createdTime ? new Date(f.createdTime).toLocaleDateString() : 'N/A'}</p>
                                         </div>
                                     </div>
-                                    <ArrowRight className="w-5 h-5 text-slate-600 group-hover:text-orange-500 transition-colors" />
+                                    <div className="flex items-center gap-2 shrink-0">
+                                        <button
+                                            onClick={async (e) => {
+                                                e.stopPropagation();
+                                                if (confirm(`Deseja mover o churrasco "${f.name}" para a lixeira do Google Drive?`)) {
+                                                    setLoading(true);
+                                                    try {
+                                                        const { deleteBarbecueFile } = await import('../services/drive');
+                                                        await deleteBarbecueFile(f.id, token!);
+                                                        loadList();
+                                                    } catch (err) {
+                                                        console.error("Failed to delete", err);
+                                                        alert("Erro ao excluir arquivo do Drive.");
+                                                        setLoading(false);
+                                                    }
+                                                }
+                                            }}
+                                            className="p-2 bg-transparent hover:bg-red-500/10 hover:text-red-400 rounded-lg text-slate-500 transition-colors"
+                                            title="Mover para a Lixeira do Drive"
+                                        >
+                                            <Trash2 className="w-4 h-4" />
+                                        </button>
+                                        <ArrowRight className="w-5 h-5 text-slate-600 group-hover:text-orange-500 transition-colors" />
+                                    </div>
                                 </div>
                             ))}
                         </div>

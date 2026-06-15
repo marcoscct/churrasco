@@ -1126,3 +1126,66 @@ export async function saveGroupsToSheet(
     });
 }
 
+export async function resetSpreadsheetData(sheetUrlOrId: string, sheetName: string, accessToken?: string) {
+    const token = accessToken || await getAccessToken();
+    let spreadsheetId = DEFAULT_SPREADSHEET_ID;
+    if (sheetUrlOrId.includes('/d/')) {
+        const { spreadsheetId: parsedId } = parseGoogleSheetUrl(sheetUrlOrId);
+        if (parsedId) spreadsheetId = parsedId;
+    } else {
+        spreadsheetId = sheetUrlOrId;
+    }
+
+    // 1. Clear all values in Main, Participantes, Pagamentos, Grupos tabs
+    const rangesToClear = [
+        `'${sheetName}'!A:Z`,
+        `'Participantes'!A:E`,
+        `'Pagamentos'!A:E`,
+        `'Grupos'!A:B`
+    ];
+
+    for (const range of rangesToClear) {
+        try {
+            await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}:clear`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}` }
+            });
+        } catch (e) {
+            console.warn(`Could not clear range ${range}`, e);
+        }
+    }
+
+    // 2. Re-write initial headers
+    // Main Sheet headers
+    const mainHeader = [['Item', 'Valor', '', 'Quem Pagou']];
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/'${sheetName}'!A1:D1?valueInputOption=USER_ENTERED`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ values: mainHeader })
+    });
+
+    // Participantes tab headers
+    const partHeader = [['Nome', 'Pix Key', 'Pix Type', 'Responsible', 'Meia']];
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/'Participantes'!A1:E1?valueInputOption=USER_ENTERED`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ values: partHeader })
+    });
+
+    // Pagamentos tab headers
+    const payHeader = [['ID', 'Data', 'De', 'Para', 'Valor']];
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/'Pagamentos'!A1:E1?valueInputOption=USER_ENTERED`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ values: payHeader })
+    });
+
+    // Grupos tab headers
+    const groupHeader = [['Grupo', 'Participantes']];
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/'Grupos'!A1:B1?valueInputOption=USER_ENTERED`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ values: groupHeader })
+    });
+}
+

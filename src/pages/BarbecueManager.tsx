@@ -171,6 +171,26 @@ export const BarbecueManager = () => {
     }
   };
 
+  // Helper: Reset Spreadsheet Data Completely
+  const handleResetSpreadsheet = async () => {
+    if (!sheetUrl || !debugInfo?.sheetName) return;
+    setLoading(true);
+    try {
+      const { resetSpreadsheetData } = await import('../services/sheets');
+      await resetSpreadsheetData(sheetUrl, debugInfo.sheetName, token!);
+      setProducts([]);
+      setParticipants([]);
+      setSettlements([]);
+      setPayments([]);
+      setGroups([]);
+      await loadData();
+    } catch (e) {
+      console.error("Failed to reset spreadsheet", e);
+      alert("Erro ao resetar planilha.");
+      setLoading(false);
+    }
+  };
+
   const handleAddProduct = async (data: { name: string; price: number; payer: string; consumers: string[] }) => {
     if (isSyncing) return;
     setIsSyncing(true);
@@ -1033,6 +1053,23 @@ export const BarbecueManager = () => {
                 >
                   <Share2 className="w-3 h-3" />
                   Convidar
+                </button>
+                <button
+                  onClick={() => {
+                    setConfirmation({
+                      isOpen: true,
+                      title: "Resetar Planilha",
+                      description: "Tem certeza que deseja apagar TODOS os participantes, itens, pagamentos e grupos desta planilha? Esta ação é irreversível.",
+                      variant: 'danger',
+                      confirmLabel: 'Sim, resetar planilha',
+                      onConfirm: handleResetSpreadsheet
+                    });
+                  }}
+                  className="text-charcoal-400 hover:text-red-400 text-xs flex items-center gap-1 px-2 py-1 rounded-md hover:bg-white/5 transition-colors border border-transparent hover:border-red-500/20"
+                  title="Resetar Planilha"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  Resetar Planilha
                 </button>
                 <button
                   onClick={handleDisconnect}
