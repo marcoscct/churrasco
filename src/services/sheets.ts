@@ -651,21 +651,32 @@ export async function addParticipantToSheet(name: string, sheetName: string, she
                 fields: "userEnteredValue",
                 start: { sheetId: sheetId, rowIndex: 0, columnIndex: lastColIndex }
             }
-        },
-        {
+        }
+    ];
+
+    if (totalRowIndex > 0) {
+        requests.push({
             copyPaste: {
                 source: { sheetId: sheetId, startRowIndex: totalRowIndex, endRowIndex: totalRowIndex + 1, startColumnIndex: lastColIndex - 1, endColumnIndex: lastColIndex },
                 destination: { sheetId: sheetId, startRowIndex: totalRowIndex, endRowIndex: totalRowIndex + 1, startColumnIndex: lastColIndex, endColumnIndex: lastColIndex + 1 },
                 pasteType: "PASTE_FORMULA"
             }
-        }
-    ];
+        });
+    }
 
     await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ requests })
     });
+
+    // Also write to 'Participantes' sheet to ensure the names are stored there
+    const appendUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/'Participantes'!A1:E1:append?valueInputOption=USER_ENTERED`;
+    await fetch(appendUrl, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ values: [[name, '', '', '', 'NÃO']] })
+    }).catch(err => console.error("Failed to append participant to Participantes tab", err));
 }
 
 /**
@@ -906,11 +917,33 @@ export async function initializeSheet(targetUrlOrId: string, _products: Product[
             headers: { Authorization: `Bearer ${token}` }
         });
         const meta = await metaRes.json();
-        const mainSheetTitle = meta.sheets?.[0]?.properties?.title || 'Sheet1';
+        const mainSheet = meta.sheets?.[0];
+        const mainSheetTitle = mainSheet?.properties?.title || 'Sheet1';
+        const mainSheetId = mainSheet?.properties?.sheetId || 0;
+
+        let activeSheetTitle = mainSheetTitle;
+        if (mainSheetTitle.toLowerCase() === 'sheet1' || mainSheetTitle.toLowerCase() === 'página1' || mainSheetTitle.toLowerCase() === 'página 1') {
+            await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    requests: [{
+                        updateSheetProperties: {
+                            properties: {
+                                sheetId: mainSheetId,
+                                title: "Churrasco"
+                            },
+                            fields: "title"
+                        }
+                    }]
+                })
+            });
+            activeSheetTitle = "Churrasco";
+        }
 
         const headerValues = [['Item', 'Valor', '', 'Quem Pagou']]; // We can add participants later as columns
 
-        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/'${mainSheetTitle}'!A1:D1?valueInputOption=USER_ENTERED`, {
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/'${activeSheetTitle}'!A1:D1?valueInputOption=USER_ENTERED`, {
             method: 'PUT',
             headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({ values: headerValues })
