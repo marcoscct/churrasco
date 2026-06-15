@@ -1,17 +1,19 @@
 import { useState, useEffect } from 'react';
 import { X, Check, Plus, ShoppingBag, Save } from 'lucide-react';
-import type { Participant, Product } from '../types';
+import { clsx } from 'clsx';
+import type { Participant, Product, Group } from '../types';
 
 interface AddProductModalProps {
     isOpen: boolean;
     onClose: () => void;
     participants: Participant[];
+    groups?: Group[];
     onAdd: (data: { name: string; price: number; payer: string; consumers: string[] }) => void;
     onEdit?: (data: { name: string; price: number; payer: string; consumers: string[] }) => void;
     productToEdit?: Product;
 }
 
-export function AddProductModal({ isOpen, onClose, participants, onAdd, onEdit, productToEdit }: AddProductModalProps) {
+export function AddProductModal({ isOpen, onClose, participants, groups = [], onAdd, onEdit, productToEdit }: AddProductModalProps) {
     const [name, setName] = useState('');
     const [price, setPrice] = useState('');
     const [payer, setPayer] = useState('');
@@ -71,6 +73,26 @@ export function AddProductModal({ isOpen, onClose, participants, onAdd, onEdit, 
                 ? prev.filter(c => c !== pName)
                 : [...prev, pName]
         );
+    };
+
+    const toggleGroup = (groupMembers: string[]) => {
+        const validGroupMembers = groupMembers.filter(mName => participants.some(p => p.name === mName));
+        if (validGroupMembers.length === 0) return;
+
+        const allSelected = validGroupMembers.every(name => consumers.includes(name));
+        if (allSelected) {
+            setConsumers(prev => prev.filter(c => !validGroupMembers.includes(c)));
+        } else {
+            setConsumers(prev => {
+                const newConsumers = [...prev];
+                validGroupMembers.forEach(name => {
+                    if (!newConsumers.includes(name)) {
+                        newConsumers.push(name);
+                    }
+                });
+                return newConsumers;
+            });
+        }
     };
 
     const toggleAll = () => {
@@ -150,6 +172,36 @@ export function AddProductModal({ isOpen, onClose, participants, onAdd, onEdit, 
                                 {consumers.length === participants.length ? 'Desmarcar Todos' : 'Marcar Todos'}
                             </button>
                         </div>
+
+                        {/* Group Selection Shortcuts */}
+                        {groups.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5 mb-3 bg-charcoal-950/40 p-2.5 rounded-lg border border-white/5">
+                                <span className="text-[10px] uppercase font-bold text-charcoal-500 mr-1 self-center">Grupos:</span>
+                                {groups.map(g => {
+                                    const validMembers = g.members.filter(m => participants.some(p => p.name === m));
+                                    const allSelected = validMembers.length > 0 && validMembers.every(name => consumers.includes(name));
+                                    const someSelected = !allSelected && validMembers.some(name => consumers.includes(name));
+                                    return (
+                                        <button
+                                            key={g.name}
+                                            type="button"
+                                            onClick={() => toggleGroup(g.members)}
+                                            className={clsx(
+                                                "text-xxs px-2.5 py-1 rounded-md border font-medium transition-all",
+                                                allSelected
+                                                    ? "bg-ember-500/20 border-ember-500/40 text-ember-400 hover:bg-ember-500/30"
+                                                    : someSelected
+                                                        ? "bg-ember-500/10 border-ember-500/20 text-ember-400/80 hover:bg-ember-500/20"
+                                                        : "bg-charcoal-800 border-white/5 text-charcoal-400 hover:bg-charcoal-700 hover:text-white"
+                                            )}
+                                        >
+                                            {g.name} ({validMembers.length})
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        )}
+
                         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-40 overflow-y-auto pr-2 custom-scrollbar">
                             {participants.map(p => (
                                 <button

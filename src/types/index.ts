@@ -33,12 +33,18 @@ export interface PaymentRecord {
     date?: string;
 }
 
+export interface Group {
+    name: string;
+    members: string[]; // List of participant names
+}
+
 export interface SheetData {
     products: Product[];
     participants: Participant[];
     settlements: Transaction[];
     payments: PaymentRecord[]; // Completed payments ("Pagamento" rows)
     totalCost: number;
+    groups?: Group[]; // Custom participant groups
     isEmpty?: boolean; // New flag to indicate virgin sheet
     debugInfo?: {
         sheetName: string;

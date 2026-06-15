@@ -1,13 +1,16 @@
 import { useState, useEffect } from 'react';
-import { X, Save, Users, ChevronDown, ChevronUp, Plus, Trash2, AlertCircle } from 'lucide-react';
+import { X, Save, Users, ChevronDown, ChevronUp, Plus, Trash2, AlertCircle, Check } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
-import type { Participant, Product } from '../types';
+import { clsx } from 'clsx';
+import type { Participant, Product, Group } from '../types';
 
 interface ManageParticipantsModalProps {
     isOpen: boolean;
     onClose: () => void;
     participants: Participant[];
     products: Product[];
+    groups?: Group[];
+    onSaveGroups: (groups: Group[]) => void;
     onUpdate: (name: string, data?: { pix?: Participant['pix'], responsible?: string }) => void;
     onBulkAdd: (names: string[]) => void;
     onToggleConsumption: (productId: string, participantName: string, isConsumed: boolean) => void;
@@ -18,10 +21,10 @@ interface ManageParticipantsModalProps {
 
 import { ConfirmationModal, type ConfirmationState } from './ConfirmationModal';
 
-export function ManageParticipantsModal({ isOpen, onClose, participants, products, onUpdate, onBulkAdd, onToggleConsumption, onUpdatePayer, onRemove, initialExpandedParticipant }: ManageParticipantsModalProps) {
+export function ManageParticipantsModal({ isOpen, onClose, participants, products, groups = [], onSaveGroups, onUpdate, onBulkAdd, onToggleConsumption, onUpdatePayer, onRemove, initialExpandedParticipant }: ManageParticipantsModalProps) {
     if (!isOpen) return null;
 
-    // Get list of all participants for the responsible selector
+    const [modalTab, setModalTab] = useState<'participants' | 'groups'>('participants');
     const allParticipants = participants;
 
     const [confirmation, setConfirmation] = useState<ConfirmationState>({
@@ -52,42 +55,108 @@ export function ManageParticipantsModal({ isOpen, onClose, participants, product
                 <div className="p-6 border-b border-white/5 flex justify-between items-center bg-charcoal-950/50">
                     <h2 className="text-xl font-bold text-white flex items-center gap-2">
                         <Users className="w-5 h-5 text-ember-500" />
-                        Gerenciar Participantes
+                        Gerenciar Churrasco
                     </h2>
                     <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-colors text-charcoal-400">
                         <X className="w-5 h-5" />
                     </button>
                 </div>
 
-                <div className="p-6 overflow-y-auto custom-scrollbar flex-1">
-                    <div className="space-y-4">
-                        {participants.map((p) => (
-                            <ParticipantRow
-                                key={p.name}
-                                participant={p}
-                                allParticipants={allParticipants}
-                                onSave={(data) => onUpdate(p.name, data)}
-                                products={products}
-                                onToggleConsumption={onToggleConsumption}
-                                onUpdatePayer={onUpdatePayer}
-                                onRemove={onRemove}
-                                onRequestConfirmation={requestConfirmation}
-                                defaultExpanded={initialExpandedParticipant === p.name}
-                            />
-                        ))}
+                {/* Modal Tabs */}
+                <div className="flex border-b border-white/5 bg-charcoal-950/20">
+                    <button
+                        onClick={() => setModalTab('participants')}
+                        className={`flex-1 p-3.5 text-sm font-semibold transition-colors border-b-2 ${modalTab === 'participants' ? 'border-ember-500 text-ember-400' : 'border-transparent text-charcoal-400 hover:text-white'}`}
+                    >
+                        Participantes ({participants.length})
+                    </button>
+                    <button
+                        onClick={() => setModalTab('groups')}
+                        className={`flex-1 p-3.5 text-sm font-semibold transition-colors border-b-2 ${modalTab === 'groups' ? 'border-ember-500 text-ember-400' : 'border-transparent text-charcoal-400 hover:text-white'}`}
+                    >
+                        Grupos ({groups.length})
+                    </button>
+                </div>
 
-                        {/* New Participant Input */}
-                        <div className="pt-4 border-t border-white/5">
-                            <p className="text-sm font-medium text-charcoal-400 mb-1">Adicionar Novo</p>
-                            <p className="text-xs text-charcoal-500 mb-2">Separe múltiplos nomes por vírgula (,) ou ponto e vírgula (;)</p>
-                            <NewParticipantForm onAdd={(nameInput: string) => {
-                                const names = nameInput.split(/[;,]/).map(n => n.trim()).filter(Boolean);
-                                if (names.length > 0) {
-                                    onBulkAdd(names);
-                                }
-                            }} />
+                <div className="p-6 overflow-y-auto custom-scrollbar flex-1">
+                    {modalTab === 'groups' ? (
+                        <div className="space-y-6">
+                            {/* Group List */}
+                            <div className="space-y-3 max-h-[40vh] overflow-y-auto pr-2 custom-scrollbar">
+                                {groups.length === 0 ? (
+                                    <p className="text-sm text-charcoal-500 italic text-center py-6">Nenhum grupo criado ainda.</p>
+                                ) : (
+                                    groups.map(g => (
+                                        <div key={g.name} className="bg-charcoal-800/40 p-4 rounded-xl border border-white/5 flex flex-col gap-2">
+                                            <div className="flex justify-between items-center">
+                                                <h3 className="font-semibold text-white">{g.name}</h3>
+                                                <button
+                                                    onClick={() => {
+                                                        const updated = groups.filter(group => group.name !== g.name);
+                                                        onSaveGroups(updated);
+                                                    }}
+                                                    className="p-1 hover:bg-white/10 rounded text-red-500 transition-colors"
+                                                    title="Excluir Grupo"
+                                                >
+                                                    <Trash2 className="w-4 h-4" />
+                                                </button>
+                                            </div>
+                                            <p className="text-xs text-charcoal-400">
+                                                {g.members.length === 0
+                                                    ? 'Sem participantes neste grupo'
+                                                    : g.members.join(', ')
+                                                }
+                                            </p>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+
+                            {/* Create Group Form */}
+                            <div className="pt-4 border-t border-white/5">
+                                <p className="text-sm font-medium text-charcoal-400 mb-3">Criar Novo Grupo</p>
+                                <NewGroupForm
+                                    participants={participants}
+                                    onAdd={(newGroup) => {
+                                        if (groups.some(g => g.name.toLowerCase() === newGroup.name.toLowerCase())) {
+                                            alert("Já existe um grupo com este nome.");
+                                            return;
+                                        }
+                                        onSaveGroups([...groups, newGroup]);
+                                    }}
+                                />
+                            </div>
                         </div>
-                    </div>
+                    ) : (
+                        <div className="space-y-4">
+                            {participants.map((p) => (
+                                <ParticipantRow
+                                    key={p.name}
+                                    participant={p}
+                                    allParticipants={allParticipants}
+                                    onSave={(data) => onUpdate(p.name, data)}
+                                    products={products}
+                                    onToggleConsumption={onToggleConsumption}
+                                    onUpdatePayer={onUpdatePayer}
+                                    onRemove={onRemove}
+                                    onRequestConfirmation={requestConfirmation}
+                                    defaultExpanded={initialExpandedParticipant === p.name}
+                                />
+                            ))}
+
+                            {/* New Participant Input */}
+                            <div className="pt-4 border-t border-white/5">
+                                <p className="text-sm font-medium text-charcoal-400 mb-1">Adicionar Novo</p>
+                                <p className="text-xs text-charcoal-500 mb-2">Separe múltiplos nomes por vírgula (,) ou ponto e vírgula (;)</p>
+                                <NewParticipantForm onAdd={(nameInput: string) => {
+                                    const names = nameInput.split(/[;,]/).map(n => n.trim()).filter(Boolean);
+                                    if (names.length > 0) {
+                                        onBulkAdd(names);
+                                    }
+                                }} />
+                            </div>
+                        </div>
+                    )}
                 </div>
             </motion.div>
 
@@ -409,6 +478,85 @@ function NewParticipantForm({ onAdd }: { onAdd: (name: string) => void }) {
             >
                 <Plus className="w-4 h-4" />
             </button>
+        </div>
+    );
+}
+
+function NewGroupForm({ participants, onAdd }: { participants: Participant[], onAdd: (g: Group) => void }) {
+    const [name, setName] = useState('');
+    const [selectedMembers, setSelectedMembers] = useState<string[]>([]);
+
+    const toggleMember = (mName: string) => {
+        setSelectedMembers(prev => 
+            prev.includes(mName)
+                ? prev.filter(n => n !== mName)
+                : [...prev, mName]
+        );
+    };
+
+    const handleCreate = () => {
+        if (!name.trim()) return;
+        onAdd({
+            name: name.trim(),
+            members: selectedMembers
+        });
+        setName('');
+        setSelectedMembers([]);
+    };
+
+    return (
+        <div className="space-y-4">
+            <div className="flex gap-2">
+                <input
+                    type="text"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="Nome do grupo (ex: Bebem, Crianças)..."
+                    className="flex-1 bg-charcoal-950 border border-charcoal-700 rounded-lg px-3 py-2 text-sm text-white placeholder-charcoal-600 focus:border-ember-500 outline-none"
+                    onKeyDown={(e) => {
+                        if (e.key === 'Enter' && name.trim()) {
+                            handleCreate();
+                        }
+                    }}
+                />
+                <button
+                    disabled={!name.trim()}
+                    onClick={handleCreate}
+                    className="bg-charcoal-700 hover:bg-charcoal-600 disabled:opacity-50 disabled:hover:bg-charcoal-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                >
+                    <Plus className="w-4 h-4" />
+                </button>
+            </div>
+
+            <div className="space-y-2">
+                <p className="text-xs font-bold text-charcoal-500 uppercase tracking-wider">Membros do Grupo</p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-32 overflow-y-auto pr-2 custom-scrollbar">
+                    {participants.map(p => {
+                        const isChecked = selectedMembers.includes(p.name);
+                        return (
+                            <button
+                                key={p.name}
+                                type="button"
+                                onClick={() => toggleMember(p.name)}
+                                className={clsx(
+                                    "flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs transition-all border",
+                                    isChecked
+                                        ? "bg-ember-500/10 border-ember-500/50 text-white"
+                                        : "bg-charcoal-850 border-transparent text-charcoal-400 hover:bg-charcoal-800"
+                                )}
+                            >
+                                <div className={clsx(
+                                    "w-3 h-3 rounded border flex items-center justify-center transition-colors",
+                                    isChecked ? "bg-ember-500 border-ember-500" : "border-charcoal-500"
+                                )}>
+                                    {isChecked && <Check className="w-2.5 h-2.5 text-white" />}
+                                </div>
+                                <span className="truncate">{p.name}</span>
+                            </button>
+                        );
+                    })}
+                </div>
+            </div>
         </div>
     );
 }

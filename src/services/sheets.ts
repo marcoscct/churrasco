@@ -45,10 +45,11 @@ export async function fetchSpreadsheetData(customUrl?: string, accessToken?: str
     const sheetId = sheet.properties.sheetId; // We need this for batchUpdate
 
     // 2. Fetch Data
-    // Fetch Main, Participantes, AND Pagamentos
+    // Fetch Main, Participantes, Pagamentos, AND Grupos
     const rangeMain = `'${sheetName}'!A1:Z100`;
     const rangeParticipants = `'Participantes'!A1:D100`;
     const rangePayments = `'Pagamentos'!A:E`; // ID, Date, From, To, Amount
+    const rangeGroups = `'Grupos'!A:B`;
 
     // Fetch Participantes
     let participantRows: string[][] = [];
@@ -78,6 +79,20 @@ export async function fetchSpreadsheetData(customUrl?: string, accessToken?: str
         console.warn("Pagamentos tab not found", e);
     }
 
+    // Fetch Grupos
+    let groupRows: string[][] = [];
+    try {
+        const responseGroup = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${rangeGroups}`, {
+            headers: { Authorization: `Bearer ${token}` }
+        });
+        if (responseGroup.ok) {
+            const dataGroup = await responseGroup.json();
+            groupRows = dataGroup.values as string[][] || [];
+        }
+    } catch (e) {
+        console.warn("Grupos tab not found", e);
+    }
+
     const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${rangeMain}`, {
         headers: { Authorization: `Bearer ${token}` }
     });
@@ -87,12 +102,12 @@ export async function fetchSpreadsheetData(customUrl?: string, accessToken?: str
     const rows = data.values as string[][];
 
     // Pass sheetName and sheetId for debug/write
-    return parseSheetData(rows || [], sheetName, participantRows, paymentRows, sheetId);
+    return parseSheetData(rows || [], sheetName, participantRows, paymentRows, groupRows, sheetId);
 }
 
 
 
-function parseSheetData(rows: string[][], sheetName: string, participantRows: string[][], paymentRows: string[][], sheetId?: number): SheetData {
+function parseSheetData(rows: string[][], sheetName: string, participantRows: string[][], paymentRows: string[][], groupRows: string[][], sheetId?: number): SheetData {
     const products: Product[] = [];
     const participantMap = new Map<string, Participant>();
 
@@ -268,7 +283,8 @@ function parseSheetData(rows: string[][], sheetName: string, participantRows: st
     }
 
     const stats = calculateStats(products, participantMap, sheetName, rows, headerRowIndex, sheetId);
-    return { ...stats, isEmpty };
+    const groups = parseGroups(groupRows);
+    return { ...stats, groups, isEmpty };
 }
 
 export function calculateStats(
@@ -995,5 +1011,78 @@ export async function deleteParticipantFromSheet(name: string, sheetName: string
             });
         }
     }
+}
+
+import type { Group } from '../types';
+
+export function parseGroups(rows: string[][]): Group[] {
+    const groups: Group[] = [];
+    if (!rows || rows.length === 0) return groups;
+
+    rows.forEach((row, idx) => {
+        if (idx === 0 && row[0]?.toLowerCase().includes('grupo')) return; // Skip header
+        if (!row || row.length < 2) return;
+
+        const name = row[0]?.trim();
+        const membersStr = row[1];
+        const members = membersStr ? membersStr.split(',').map(m => m.trim()).filter(Boolean) : [];
+
+        if (name) {
+            groups.push({ name, members });
+        }
+    });
+
+    return groups;
+}
+
+export async function saveGroupsToSheet(
+    groups: Group[],
+    customUrl?: string,
+    accessToken?: string
+) {
+    const token = accessToken || await getAccessToken();
+    let spreadsheetId = DEFAULT_SPREADSHEET_ID;
+    if (customUrl) {
+        const { spreadsheetId: parsedId } = parseGoogleSheetUrl(customUrl);
+        if (parsedId) spreadsheetId = parsedId;
+    }
+
+    // 1. Ensure 'Grupos' tab exists
+    const metaRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}`, {
+        headers: { Authorization: `Bearer ${token}` }
+    });
+    if (!metaRes.ok) throw new Error("Failed to fetch spreadsheet metadata");
+    const meta = await metaRes.json();
+
+    const gruposSheet = meta.sheets.find((s: any) => s.properties.title === 'Grupos');
+    if (!gruposSheet) {
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                requests: [{ addSheet: { properties: { title: "Grupos" } } }]
+            })
+        });
+    }
+
+    // 2. Clear existing values
+    const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/'Grupos'!A:B:clear`;
+    await fetch(clearUrl, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+    });
+
+    // 3. Write new list
+    const values = [['Grupo', 'Participantes']];
+    groups.forEach(g => {
+        values.push([g.name, g.members.join(', ')]);
+    });
+
+    const writeUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/'Grupos'!A1?valueInputOption=USER_ENTERED`;
+    await fetch(writeUrl, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ values })
+    });
 }
 

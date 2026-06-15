@@ -22,7 +22,7 @@ import {
   Share2
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
-import type { Product, Participant, Transaction, PaymentRecord, SheetData } from '../types';
+import type { Product, Participant, Transaction, PaymentRecord, SheetData, Group } from '../types';
 import { fetchSpreadsheetData, deleteAllPaymentsFromSheet } from '../services/sheets';
 import { ConfirmationModal, type ConfirmationState } from '../components/ConfirmationModal';
 
@@ -34,6 +34,7 @@ export const BarbecueManager = () => {
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [settlements, setSettlements] = useState<Transaction[]>([]);
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
+  const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -99,6 +100,7 @@ export const BarbecueManager = () => {
       setParticipants(data.participants);
       setSettlements(data.settlements || []);
       setPayments(data.payments || []);
+      setGroups(data.groups || []);
       setDebugInfo(data.debugInfo || null);
       if (url) setSheetUrl(url); // Confirm URL only on success
     } catch (err: any) {
@@ -234,6 +236,15 @@ export const BarbecueManager = () => {
     participants: true,
     products: true
   });
+
+  const [expandedParticipants, setExpandedParticipants] = useState<Record<string, boolean>>({});
+
+  const toggleParticipantExpanded = (name: string) => {
+    setExpandedParticipants(prev => ({
+      ...prev,
+      [name]: !prev[name]
+    }));
+  };
 
   const toggleSection = (section: string) => {
     setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
@@ -693,6 +704,24 @@ export const BarbecueManager = () => {
     }
   };
 
+  const handleSaveGroups = async (updatedGroups: Group[]) => {
+    setGroups(updatedGroups);
+    console.log("Saving groups:", updatedGroups);
+
+    if (debugInfo?.sheetName) {
+      setIsSyncing(true);
+      try {
+        const { saveGroupsToSheet } = await import('../services/sheets');
+        await saveGroupsToSheet(updatedGroups, sheetUrl, token!);
+      } catch (err) {
+        console.error("Failed to save groups", err);
+        alert("Erro ao salvar grupos na planilha.");
+      } finally {
+        setIsSyncing(false);
+      }
+    }
+  };
+
   const totalCost = products.reduce((acc, p) => acc + (p.isPayment || (typeof p.id === 'string' && p.id.startsWith('pay-')) ? 0 : p.price), 0);
 
   if (loading) {
@@ -927,6 +956,7 @@ export const BarbecueManager = () => {
             setEditingProduct(undefined);
           }}
           participants={participants}
+          groups={groups}
           onAdd={handleAddProduct}
           onEdit={handleEditProductSave}
           productToEdit={editingProduct}
@@ -1094,25 +1124,48 @@ export const BarbecueManager = () => {
               onToggle={() => toggleSection('participants')}
             >
               <div className="space-y-3">
+                <div className="flex flex-col sm:flex-row gap-2 mb-4">
+                  <button
+                    onClick={() => setIsManageParticipantsOpen(true)}
+                    className="flex-1 py-2.5 bg-charcoal-800 hover:bg-charcoal-700 text-charcoal-300 hover:text-white rounded-lg transition-colors text-sm font-medium border border-dashed border-charcoal-600 hover:border-white/20 flex items-center justify-center gap-1.5"
+                  >
+                    <Users className="w-4 h-4 text-ember-400" />
+                    Gerenciar Participantes / Grupos
+                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => {
+                        const expanded: Record<string, boolean> = {};
+                        participants.forEach(p => {
+                          expanded[p.name] = true;
+                        });
+                        setExpandedParticipants(expanded);
+                      }}
+                      className="flex-1 sm:flex-none px-3 py-2.5 bg-charcoal-800 hover:bg-charcoal-700 hover:text-white text-charcoal-300 rounded-lg text-xs font-medium border border-white/5 transition-colors whitespace-nowrap"
+                    >
+                      Expandir Todos
+                    </button>
+                    <button
+                      onClick={() => setExpandedParticipants({})}
+                      className="flex-1 sm:flex-none px-3 py-2.5 bg-charcoal-800 hover:bg-charcoal-700 hover:text-white text-charcoal-300 rounded-lg text-xs font-medium border border-white/5 transition-colors whitespace-nowrap"
+                    >
+                      Colapsar Todos
+                    </button>
+                  </div>
+                </div>
                 {participants.map((participant) => (
                   <ParticipantCard
                     key={participant.name}
                     participant={participant}
                     products={products}
+                    isExpanded={!!expandedParticipants[participant.name]}
+                    onToggle={() => toggleParticipantExpanded(participant.name)}
                     onEdit={() => {
                       setEditingParticipant(participant.name);
                       setIsManageParticipantsOpen(true);
                     }}
                   />
                 ))}
-                <div className="pt-4 mt-4 border-t border-white/5">
-                  <button
-                    onClick={() => setIsManageParticipantsOpen(true)}
-                    className="w-full py-2 bg-charcoal-800 hover:bg-charcoal-700 text-charcoal-300 hover:text-white rounded-lg transition-colors text-sm font-medium border border-dashed border-charcoal-600 hover:border-white/20"
-                  >
-                    Gerenciar Participantes...
-                  </button>
-                </div>
               </div>
             </Section>
           </div>
@@ -1127,6 +1180,8 @@ export const BarbecueManager = () => {
           }}
           participants={participants}
           products={products}
+          groups={groups}
+          onSaveGroups={handleSaveGroups}
           onUpdate={handleUpdateParticipant}
           onBulkAdd={handleBulkAddParticipants}
           onToggleConsumption={handleToggleConsumption}
