@@ -57,7 +57,14 @@ export function ParticipantCard({ participant, products, onEdit, isExpanded: isE
                         {participant.name.charAt(0)}
                     </div>
                     <div className="min-w-0">
-                        <h3 className="font-bold text-base text-white leading-tight truncate">{participant.name}</h3>
+                        <div className="flex items-center gap-1.5">
+                            <h3 className="font-bold text-base text-white leading-tight truncate">{participant.name}</h3>
+                            {participant.isHalf && (
+                                <span className="bg-orange-500/20 text-orange-400 border border-orange-500/30 text-[9px] uppercase font-extrabold px-1.5 py-0.5 rounded-full tracking-wider leading-none shrink-0">
+                                    Meia
+                                </span>
+                            )}
+                        </div>
                         {isDependent && (
                             <p className="text-[10px] text-charcoal-500 font-bold uppercase tracking-wider mt-0.5">Pago por {participant.paymentResponsible}</p>
                         )}

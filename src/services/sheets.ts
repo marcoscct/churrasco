@@ -47,7 +47,7 @@ export async function fetchSpreadsheetData(customUrl?: string, accessToken?: str
     // 2. Fetch Data
     // Fetch Main, Participantes, Pagamentos, AND Grupos
     const rangeMain = `'${sheetName}'!A1:Z100`;
-    const rangeParticipants = `'Participantes'!A1:D100`;
+    const rangeParticipants = `'Participantes'!A1:E100`;
     const rangePayments = `'Pagamentos'!A:E`; // ID, Date, From, To, Amount
     const rangeGroups = `'Grupos'!A:B`;
 
@@ -118,21 +118,22 @@ function parseSheetData(rows: string[][], sheetName: string, participantRows: st
         isEmpty = true;
     }
 
-    // Parse Participant Meta Data (PIX + Responsible)
-    // ... (Existing Parsing Logic) ...
-    // Expected: Name (A), Key (B), Type (C), Responsible (D)
-    const metaMap = new Map<string, { pix?: { key: string, type: any }, responsible?: string }>();
+    // Parse Participant Meta Data (PIX + Responsible + Meia)
+    // Expected: Name (A), Key (B), Type (C), Responsible (D), Meia (E)
+    const metaMap = new Map<string, { pix?: { key: string, type: any }, responsible?: string, isHalf?: boolean }>();
     participantRows.forEach(row => {
         if (row.length >= 1) {
             const name = row[0]?.trim();
             const key = row[1]?.trim();
             const type = (row[2]?.trim() as any) || 'CPF';
             const responsible = row[3]?.trim(); // Col D
+            const isHalf = row[4]?.trim()?.toUpperCase() === 'SIM' || row[4]?.trim()?.toLowerCase() === 'true'; // Col E
 
             if (name) {
                 const data: any = {};
                 if (key) data.pix = { key, type };
                 if (responsible) data.responsible = responsible;
+                if (isHalf) data.isHalf = true;
                 metaMap.set(name, data);
             }
         }
@@ -164,7 +165,8 @@ function parseSheetData(rows: string[][], sheetName: string, participantRows: st
                             totalConsumed: 0,
                             netBalance: 0,
                             pix: meta?.pix,
-                            paymentResponsible: meta?.responsible
+                            paymentResponsible: meta?.responsible,
+                            isHalf: meta?.isHalf || false
                         });
                     }
                 }
@@ -319,27 +321,33 @@ export function calculateStats(
 
         // Debit Consumers
         if (p.consumers.length > 0) {
-            const costPerPerson = p.price / p.consumers.length;
-            p.consumers.forEach((cName: string) => {
-                const consumer = participantMap.get(cName);
-                if (consumer) {
-                    // If it's a payment, it counts effectively as "Negative Paid" (or mapped as consumed, which reduces net balance)
-                    // Balance = Paid - Consumed.
-                    // If I Receive 50 (I am consumer of 'Pagamento'): I want my Balance to go DOWN (less positive) or UP (less negative)?
-                    // If I owed 50 (Balance -50). I receive 50. Balance should be 0.
-                    // NetBalance = Paid - Consumed.
-                    // -50 = 0 - 50.
-                    // 0 = 0 - (50 - 50??).
-                    // Wait. Received Payment is technically "Negative Consumption"?
-                    // OR: It's "Paid" by the OTHER person.
-                    // Payer (Debtor) Paid 50. Payer Balance: -50 + 50 = 0.
-                    // Consumer (Creditor) Consumed 50? Total Consumed increases.
-                    // Creditor Balance = Paid (say 100) - Consumed (say 50). Balance = +50.
-                    // Creditor "Consumes" the Payment of 50. Total Consumed = 100. Balance = 100 - 100 = 0.
-                    // YES. Treat Payment as standard consumption for the Receiver.
-                    consumer.totalConsumed += costPerPerson;
+            if (isPayment) {
+                const costPerPerson = p.price / p.consumers.length;
+                p.consumers.forEach((cName: string) => {
+                    const consumer = participantMap.get(cName);
+                    if (consumer) {
+                        consumer.totalConsumed += costPerPerson;
+                    }
+                });
+            } else {
+                let totalWeight = 0;
+                p.consumers.forEach((cName: string) => {
+                    const consumer = participantMap.get(cName);
+                    const weight = consumer?.isHalf ? 0.5 : 1.0;
+                    totalWeight += weight;
+                });
+
+                if (totalWeight > 0) {
+                    const pricePerUnitWeight = p.price / totalWeight;
+                    p.consumers.forEach((cName: string) => {
+                        const consumer = participantMap.get(cName);
+                        if (consumer) {
+                            const weight = consumer.isHalf ? 0.5 : 1.0;
+                            consumer.totalConsumed += pricePerUnitWeight * weight;
+                        }
+                    });
                 }
-            });
+            }
         }
 
         if (isPayment) {
@@ -661,10 +669,10 @@ export async function addParticipantToSheet(name: string, sheetName: string, she
 }
 
 /**
- * Updates Participant Meta Data: PIX + Responsible
- * Writes to 'Participantes' Tab: A(Name), B(Key), C(Type), D(Responsible)
+ * Updates Participant Meta Data: PIX + Responsible + Meia
+ * Writes to 'Participantes' Tab: A(Name), B(Key), C(Type), D(Responsible), E(Meia)
  */
-export async function saveParticipantData(name: string, data: { pix?: { key: string; type: string }, responsible?: string }, customUrl?: string, accessToken?: string) {
+export async function saveParticipantData(name: string, data: { pix?: { key: string; type: string }, responsible?: string, isHalf?: boolean }, customUrl?: string, accessToken?: string) {
     const token = accessToken || await getAccessToken();
 
     let spreadsheetId = DEFAULT_SPREADSHEET_ID;
@@ -689,28 +697,27 @@ export async function saveParticipantData(name: string, data: { pix?: { key: str
 
     let rowIndex = existingData.findIndex(row => row[0] === name);
 
-    // Values to write: Key, Type, Responsible
-    // Note: We need to handle preserving existing data if we only pass partial data?
-    // Current app architecture passes full object usually. Let's assume full overwrite of the row for simplicity.
+    // Values to write: Key, Type, Responsible, Meia
     const pixKey = data.pix?.key || '';
     const pixType = data.pix?.type || '';
     const responsible = data.responsible || '';
+    const isHalfStr = data.isHalf ? 'SIM' : 'NÃO';
 
     if (rowIndex !== -1) {
         // Update existing
-        const rangeToWrite = `'Participantes'!B${rowIndex + 1}:D${rowIndex + 1}`;
+        const rangeToWrite = `'Participantes'!B${rowIndex + 1}:E${rowIndex + 1}`;
         await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${rangeToWrite}?valueInputOption=USER_ENTERED`, {
             method: 'PUT',
             headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ values: [[pixKey, pixType, responsible]] })
+            body: JSON.stringify({ values: [[pixKey, pixType, responsible, isHalfStr]] })
         });
     } else {
         // Append new
-        const appendUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/'Participantes'!A1:D1:append?valueInputOption=USER_ENTERED`;
+        const appendUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/'Participantes'!A1:E1:append?valueInputOption=USER_ENTERED`;
         await fetch(appendUrl, {
             method: 'POST',
             headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ values: [[name, pixKey, pixType, responsible]] })
+            body: JSON.stringify({ values: [[name, pixKey, pixType, responsible, isHalfStr]] })
         });
     }
 }
@@ -919,10 +926,10 @@ export async function initializeSheet(targetUrlOrId: string, _products: Product[
                 })
             });
             // Headers
-            await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/'Participantes'!A1:D1?valueInputOption=USER_ENTERED`, {
+            await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/'Participantes'!A1:E1?valueInputOption=USER_ENTERED`, {
                 method: 'PUT',
                 headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ values: [['Nome', 'Pix Key', 'Pix Type', 'Responsible']] })
+                body: JSON.stringify({ values: [['Nome', 'Pix Key', 'Pix Type', 'Responsible', 'Meia']] })
             });
         }
 

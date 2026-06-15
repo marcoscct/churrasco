@@ -11,7 +11,7 @@ interface ManageParticipantsModalProps {
     products: Product[];
     groups?: Group[];
     onSaveGroups: (groups: Group[]) => void;
-    onUpdate: (name: string, data?: { pix?: Participant['pix'], responsible?: string }) => void;
+    onUpdate: (name: string, data?: { pix?: Participant['pix'], responsible?: string, isHalf?: boolean }) => void;
     onBulkAdd: (names: string[]) => void;
     onToggleConsumption: (productId: string, participantName: string, isConsumed: boolean) => void;
     onUpdatePayer: (productId: string, newPayer: string) => void;
@@ -173,7 +173,7 @@ export function ManageParticipantsModal({ isOpen, onClose, participants, product
 function ParticipantRow({ participant, allParticipants, onSave, products, onToggleConsumption, onUpdatePayer, onRemove, onRequestConfirmation, defaultExpanded }: {
     participant: Participant,
     allParticipants: Participant[],
-    onSave: (data: { pix: NonNullable<Participant['pix']>, responsible: string }) => void,
+    onSave: (data: { pix: NonNullable<Participant['pix']>, responsible: string, isHalf: boolean }) => void,
     products: Product[],
     onToggleConsumption: (pid: string, pname: string, val: boolean) => void,
     onUpdatePayer: (pid: string, newPayer: string) => void,
@@ -191,24 +191,26 @@ function ParticipantRow({ participant, allParticipants, onSave, products, onTogg
     }, [defaultExpanded]);
     const [activeTab, setActiveTab] = useState<'details' | 'consumption' | 'bought'>('details');
 
-    // Local State for PIX and Responsible form
+    // Local State for PIX, Responsible and Meia form
     const [pixKey, setPixKey] = useState(participant.pix?.key || '');
     const [pixType, setPixType] = useState(participant.pix?.type || 'CPF');
     const [editingResponsible, setEditingResponsible] = useState(participant.paymentResponsible || '');
+    const [isHalf, setIsHalf] = useState(participant.isHalf || false);
 
     // Update local state when participant prop changes (e.g. after save)
     useEffect(() => {
         setPixKey(participant.pix?.key || '');
         setPixType(participant.pix?.type || 'CPF');
         setEditingResponsible(participant.paymentResponsible || '');
+        setIsHalf(participant.isHalf || false);
     }, [participant]);
 
     const handleSave = () => {
         onSave({
             pix: { key: pixKey, type: pixType },
-            responsible: editingResponsible
+            responsible: editingResponsible,
+            isHalf: isHalf
         });
-        // Optional: Close expansion on save? No, let user confirm.
     };
 
     return (
@@ -222,9 +224,16 @@ function ParticipantRow({ participant, allParticipants, onSave, products, onTogg
                         {participant.name.charAt(0)}
                     </div>
                     <div>
-                        <p className="font-semibold text-white text-lg leading-tight">{participant.name}</p>
+                        <div className="flex items-center gap-2">
+                            <p className="font-semibold text-white text-lg leading-tight">{participant.name}</p>
+                            {participant.isHalf && (
+                                <span className="bg-orange-500/20 text-orange-400 border border-orange-500/30 text-[9px] uppercase font-extrabold px-1.5 py-0.5 rounded-full tracking-wider leading-none">
+                                    Meia
+                                </span>
+                            )}
+                        </div>
                         {participant.paymentResponsible && (
-                            <div className="mt-1 bg-charcoal-900/50 px-2 py-0.5 rounded-md border border-white/5 inline-flex items-center gap-1.5">
+                            <div className="mt-1.5 bg-charcoal-900/50 px-2 py-0.5 rounded-md border border-white/5 inline-flex items-center gap-1.5">
                                 <span className="text-[9px] uppercase tracking-wider text-charcoal-500 font-bold">PAGO POR</span>
                                 <span className="text-xs text-charcoal-300 font-medium">{participant.paymentResponsible}</span>
                             </div>
@@ -328,6 +337,27 @@ function ParticipantRow({ participant, allParticipants, onSave, products, onTogg
                                                     ))
                                                 }
                                             </select>
+                                        </div>
+
+                                        <div className="pt-2 border-t border-white/5">
+                                            <label className="block text-xs uppercase tracking-wider text-charcoal-500 font-bold mb-1">
+                                                Tipo de Participação / Divisão
+                                            </label>
+                                            <div className="flex items-center justify-between p-3 rounded-lg bg-charcoal-900/40 border border-white/5 mt-1">
+                                                <div className="min-w-0 pr-2">
+                                                    <p className="text-sm font-semibold text-white leading-tight">Pagar Meia (Peso 0.5)</p>
+                                                    <p className="text-[10px] text-charcoal-400 mt-0.5 leading-normal">Se ativo, esta pessoa pagará metade do valor de uma cota inteira na divisão de itens.</p>
+                                                </div>
+                                                <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={isHalf}
+                                                        onChange={(e) => setIsHalf(e.target.checked)}
+                                                        className="sr-only peer"
+                                                    />
+                                                    <div className="w-9 h-5 bg-charcoal-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-ember-600"></div>
+                                                </label>
+                                            </div>
                                         </div>
 
                                         <div className="flex justify-between gap-2 pt-2 border-t border-white/5 mt-4">

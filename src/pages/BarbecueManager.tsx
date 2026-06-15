@@ -161,7 +161,7 @@ export const BarbecueManager = () => {
   const handleResetPayments = async () => {
     setLoading(true);
     try {
-      await deleteAllPaymentsFromSheet(debugInfo?.sheetId ? null : id || null, sheetUrl, token!);
+      await deleteAllPaymentsFromSheet(debugInfo?.sheetId !== undefined ? null : id || null, sheetUrl, token!);
       // Reload data to reflect
       await loadData();
     } catch (e) {
@@ -208,7 +208,7 @@ export const BarbecueManager = () => {
       setPayments(result.payments || []);
 
       // Persist to Sheet using NEW Insert logic
-      if (debugInfo?.sheetName && debugInfo?.sheetId) {
+      if (debugInfo?.sheetName && debugInfo?.sheetId !== undefined) {
         addProductToSheet(
           { ...data, price: data.price },
           data.consumers,
@@ -380,7 +380,7 @@ export const BarbecueManager = () => {
       setPayments(result.payments || []);
 
       // 4. Persist
-      if (debugInfo?.sheetName && debugInfo?.sheetId) {
+      if (debugInfo?.sheetName && debugInfo?.sheetId !== undefined) {
         addPaymentToSheet(payer, receiver, amount, debugInfo.sheetName, debugInfo.sheetId, participants, sheetUrl, token!)
           .then((realId) => {
             console.log("Payment persisted. Real ID:", realId);
@@ -437,7 +437,7 @@ export const BarbecueManager = () => {
       setPayments(result.payments || []);
 
       // 4. Persist Deletion
-      if (debugInfo?.sheetName && debugInfo?.sheetId) {
+      if (debugInfo?.sheetName && debugInfo?.sheetId !== undefined) {
         // We pass a dummy product object only with ID because that's what deleteProductFromSheet needs for Payments
         const dummyProduct: any = { id: paymentId, isPayment: true };
         deleteProductFromSheet(dummyProduct, debugInfo.sheetName, debugInfo.sheetId, sheetUrl)
@@ -485,7 +485,7 @@ export const BarbecueManager = () => {
       setSettlements(result.settlements);
       setPayments(result.payments || []);
 
-      if (debugInfo?.sheetName && debugInfo?.sheetId) {
+      if (debugInfo?.sheetName && debugInfo?.sheetId !== undefined) {
         deleteProductFromSheet(product, debugInfo.sheetName, debugInfo.sheetId, sheetUrl)
           .then(() => console.log("Product deleted successfully"))
           .catch(err => {
@@ -563,7 +563,7 @@ export const BarbecueManager = () => {
       setPayments(result.payments || []); // Might remove payments involving this person
 
       // Persist
-      if (debugInfo?.sheetName && debugInfo?.sheetId) {
+      if (debugInfo?.sheetName && debugInfo?.sheetId !== undefined) {
         deleteParticipantFromSheet(name, debugInfo.sheetName, debugInfo.sheetId, sheetUrl)
           .then(() => console.log("Removed participant"))
           .catch(err => {
@@ -608,7 +608,7 @@ export const BarbecueManager = () => {
     });
   };
 
-  const handleUpdateParticipant = (name: string, data?: { pix?: Participant['pix'], responsible?: string }) => {
+  const handleUpdateParticipant = (name: string, data?: { pix?: Participant['pix'], responsible?: string, isHalf?: boolean }) => {
     let found = false;
     const updated = participants.map(p => {
       if (p.name === name) {
@@ -616,7 +616,8 @@ export const BarbecueManager = () => {
         return {
           ...p,
           ...(data?.pix ? { pix: data.pix as any } : {}),
-          ...(data?.responsible !== undefined ? { paymentResponsible: data.responsible } : {})
+          ...(data?.responsible !== undefined ? { paymentResponsible: data.responsible } : {}),
+          ...(data?.isHalf !== undefined ? { isHalf: data.isHalf } : {})
         };
       }
       return p;
@@ -630,15 +631,37 @@ export const BarbecueManager = () => {
         totalConsumed: 0,
         netBalance: 0,
         pix: data?.pix as any, // undefined if not provided
-        paymentResponsible: data?.responsible
+        paymentResponsible: data?.responsible,
+        isHalf: data?.isHalf || false
       });
     }
 
-    setParticipants(updated);
+    // Recalculate stats locally to immediately update Net Balances and Settlements in UI
+    import('../services/sheets').then(({ calculateStats }) => {
+      const pMap = new Map<string, Participant>();
+      updated.forEach(p => pMap.set(p.name, { ...p }));
+
+      const paymentItems = payments.map(pay => ({
+        id: pay.id,
+        name: 'Pagamento',
+        price: pay.amount,
+        payer: pay.from,
+        consumers: [pay.to],
+        isPayment: true
+      } as Product));
+
+      const allItems = [...products, ...paymentItems];
+
+      const result = calculateStats(allItems, pMap, debugInfo?.sheetName);
+      setParticipants(result.participants);
+      setSettlements(result.settlements);
+      setPayments(result.payments || []);
+    });
+
     console.log("Updated participant:", name, data);
 
     // Persist to Sheet
-    if (!found && debugInfo?.sheetName && debugInfo?.sheetId) {
+    if (!found && debugInfo?.sheetName && debugInfo?.sheetId !== undefined) {
       // NEW Participant -> Insert Column
       import('../services/sheets').then(({ addParticipantToSheet }) => {
         addParticipantToSheet(name, debugInfo.sheetName, debugInfo!.sheetId!, sheetUrl)
@@ -686,7 +709,7 @@ export const BarbecueManager = () => {
     setParticipants(updated);
     console.log("Bulk adding participants:", newNames);
 
-    if (debugInfo?.sheetName && debugInfo?.sheetId) {
+    if (debugInfo?.sheetName && debugInfo?.sheetId !== undefined) {
       setIsSyncing(true);
       try {
         const { addParticipantToSheet } = await import('../services/sheets');
