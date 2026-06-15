@@ -644,6 +644,46 @@ export const BarbecueManager = () => {
     }
   };
 
+  const handleBulkAddParticipants = async (names: string[]) => {
+    const newNames = names.filter(name => {
+      const trimmed = name.trim();
+      if (!trimmed) return false;
+      return !participants.some(p => p.name.toLowerCase() === trimmed.toLowerCase());
+    }).map(n => n.trim());
+
+    if (newNames.length === 0) return;
+
+    let updated = [...participants];
+    newNames.forEach(name => {
+      updated.push({
+        name,
+        totalPaid: 0,
+        totalConsumed: 0,
+        netBalance: 0
+      });
+    });
+
+    setParticipants(updated);
+    console.log("Bulk adding participants:", newNames);
+
+    if (debugInfo?.sheetName && debugInfo?.sheetId) {
+      setIsSyncing(true);
+      try {
+        const { addParticipantToSheet } = await import('../services/sheets');
+        // Add them sequentially to avoid concurrent update conflicts
+        for (const name of newNames) {
+          await addParticipantToSheet(name, debugInfo.sheetName, debugInfo.sheetId, sheetUrl, token!);
+        }
+      } catch (err) {
+        console.error("Failed to bulk add participants to sheet", err);
+        alert("Erro ao salvar alguns participantes na planilha.");
+      } finally {
+        setIsSyncing(false);
+        loadData();
+      }
+    }
+  };
+
   const totalCost = products.reduce((acc, p) => acc + (p.isPayment || (typeof p.id === 'string' && p.id.startsWith('pay-')) ? 0 : p.price), 0);
 
   if (loading) {
@@ -1079,6 +1119,7 @@ export const BarbecueManager = () => {
           participants={participants}
           products={products}
           onUpdate={handleUpdateParticipant}
+          onBulkAdd={handleBulkAddParticipants}
           onToggleConsumption={handleToggleConsumption}
           onUpdatePayer={handleUpdatePayerWrapped}
           onRemove={handleRemoveParticipant}

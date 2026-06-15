@@ -9,6 +9,7 @@ interface ManageParticipantsModalProps {
     participants: Participant[];
     products: Product[];
     onUpdate: (name: string, data?: { pix?: Participant['pix'], responsible?: string }) => void;
+    onBulkAdd: (names: string[]) => void;
     onToggleConsumption: (productId: string, participantName: string, isConsumed: boolean) => void;
     onUpdatePayer: (productId: string, newPayer: string) => void;
     onRemove: (name: string) => void;
@@ -17,7 +18,7 @@ interface ManageParticipantsModalProps {
 
 import { ConfirmationModal, type ConfirmationState } from './ConfirmationModal';
 
-export function ManageParticipantsModal({ isOpen, onClose, participants, products, onUpdate, onToggleConsumption, onUpdatePayer, onRemove, initialExpandedParticipant }: ManageParticipantsModalProps) {
+export function ManageParticipantsModal({ isOpen, onClose, participants, products, onUpdate, onBulkAdd, onToggleConsumption, onUpdatePayer, onRemove, initialExpandedParticipant }: ManageParticipantsModalProps) {
     if (!isOpen) return null;
 
     // Get list of all participants for the responsible selector
@@ -77,8 +78,14 @@ export function ManageParticipantsModal({ isOpen, onClose, participants, product
 
                         {/* New Participant Input */}
                         <div className="pt-4 border-t border-white/5">
-                            <p className="text-sm font-medium text-charcoal-400 mb-2">Adicionar Novo</p>
-                            <NewParticipantForm onAdd={(name: string) => onUpdate(name)} />
+                            <p className="text-sm font-medium text-charcoal-400 mb-1">Adicionar Novo</p>
+                            <p className="text-xs text-charcoal-500 mb-2">Separe múltiplos nomes por vírgula (,) ou ponto e vírgula (;)</p>
+                            <NewParticipantForm onAdd={(nameInput: string) => {
+                                const names = nameInput.split(/[;,]/).map(n => n.trim()).filter(Boolean);
+                                if (names.length > 0) {
+                                    onBulkAdd(names);
+                                }
+                            }} />
                         </div>
                     </div>
                 </div>
@@ -383,8 +390,14 @@ function NewParticipantForm({ onAdd }: { onAdd: (name: string) => void }) {
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="Nome..."
+                placeholder="Nomes (ex: João, Maria; José)..."
                 className="flex-1 bg-charcoal-950 border border-charcoal-700 rounded-lg px-3 py-2 text-sm text-white placeholder-charcoal-600 focus:border-ember-500 outline-none"
+                onKeyDown={(e) => {
+                    if (e.key === 'Enter' && name.trim()) {
+                        onAdd(name);
+                        setName('');
+                    }
+                }}
             />
             <button
                 disabled={!name.trim()}
