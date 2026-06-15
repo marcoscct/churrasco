@@ -645,11 +645,20 @@ export const BarbecueManager = () => {
   };
 
   const handleBulkAddParticipants = async (names: string[]) => {
-    const newNames = names.filter(name => {
-      const trimmed = name.trim();
-      if (!trimmed) return false;
-      return !participants.some(p => p.name.toLowerCase() === trimmed.toLowerCase());
-    }).map(n => n.trim());
+    const seen = new Set<string>();
+    const uniqueInput = names
+      .map(n => n.trim())
+      .filter(n => {
+        if (!n) return false;
+        const lower = n.toLowerCase();
+        if (seen.has(lower)) return false;
+        seen.add(lower);
+        return true;
+      });
+
+    const newNames = uniqueInput.filter(name => {
+      return !participants.some(p => p.name.toLowerCase() === name.toLowerCase());
+    });
 
     if (newNames.length === 0) return;
 
