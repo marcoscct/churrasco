@@ -606,7 +606,7 @@ export const BarbecueManager = () => {
     });
   };
 
-  const handleUpdateParticipant = (name: string, data?: { pix?: Participant['pix'], responsible?: string, isHalf?: boolean }) => {
+  const handleUpdateParticipant = (name: string, data?: { pix?: Participant['pix'], responsible?: string, preferredRecipient?: string, isHalf?: boolean }) => {
     let found = false;
     const updated = participants.map(p => {
       if (p.name === name) {
@@ -615,6 +615,7 @@ export const BarbecueManager = () => {
           ...p,
           ...(data?.pix ? { pix: data.pix as any } : {}),
           ...(data?.responsible !== undefined ? { paymentResponsible: data.responsible } : {}),
+          ...(data?.preferredRecipient !== undefined ? { preferredRecipient: data.preferredRecipient } : {}),
           ...(data?.isHalf !== undefined ? { isHalf: data.isHalf } : {})
         };
       }
@@ -630,6 +631,7 @@ export const BarbecueManager = () => {
         netBalance: 0,
         pix: data?.pix as any, // undefined if not provided
         paymentResponsible: data?.responsible,
+        preferredRecipient: data?.preferredRecipient,
         isHalf: data?.isHalf || false
       });
     }

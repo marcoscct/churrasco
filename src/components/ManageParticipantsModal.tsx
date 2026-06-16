@@ -11,7 +11,7 @@ interface ManageParticipantsModalProps {
     products: Product[];
     groups?: Group[];
     onSaveGroups: (groups: Group[]) => void;
-    onUpdate: (name: string, data?: { pix?: Participant['pix'], responsible?: string, isHalf?: boolean }) => void;
+    onUpdate: (name: string, data?: { pix?: Participant['pix'], responsible?: string, preferredRecipient?: string, isHalf?: boolean }) => void;
     onBulkAdd: (names: string[]) => void;
     onToggleConsumption: (productId: string, participantName: string, isConsumed: boolean) => void;
     onUpdatePayer: (productId: string, newPayer: string) => void;
@@ -173,7 +173,7 @@ export function ManageParticipantsModal({ isOpen, onClose, participants, product
 function ParticipantRow({ participant, allParticipants, onSave, products, onToggleConsumption, onUpdatePayer, onRemove, onRequestConfirmation, defaultExpanded }: {
     participant: Participant,
     allParticipants: Participant[],
-    onSave: (data: { pix: NonNullable<Participant['pix']>, responsible: string, isHalf: boolean }) => void,
+    onSave: (data: { pix: NonNullable<Participant['pix']>, responsible: string, preferredRecipient?: string, isHalf: boolean }) => void,
     products: Product[],
     onToggleConsumption: (pid: string, pname: string, val: boolean) => void,
     onUpdatePayer: (pid: string, newPayer: string) => void,
@@ -191,10 +191,11 @@ function ParticipantRow({ participant, allParticipants, onSave, products, onTogg
     }, [defaultExpanded]);
     const [activeTab, setActiveTab] = useState<'details' | 'consumption' | 'bought'>('details');
 
-    // Local State for PIX, Responsible and Meia form
+    // Local State for PIX, Responsible, PreferredRecipient and Meia form
     const [pixKey, setPixKey] = useState(participant.pix?.key || '');
     const [pixType, setPixType] = useState(participant.pix?.type || 'CPF');
     const [editingResponsible, setEditingResponsible] = useState(participant.paymentResponsible || '');
+    const [editingPreferredRecipient, setEditingPreferredRecipient] = useState(participant.preferredRecipient || '');
     const [isHalf, setIsHalf] = useState(participant.isHalf || false);
 
     // Update local state when participant prop changes (e.g. after save)
@@ -202,6 +203,7 @@ function ParticipantRow({ participant, allParticipants, onSave, products, onTogg
         setPixKey(participant.pix?.key || '');
         setPixType(participant.pix?.type || 'CPF');
         setEditingResponsible(participant.paymentResponsible || '');
+        setEditingPreferredRecipient(participant.preferredRecipient || '');
         setIsHalf(participant.isHalf || false);
     }, [participant]);
 
@@ -209,6 +211,7 @@ function ParticipantRow({ participant, allParticipants, onSave, products, onTogg
         onSave({
             pix: { key: pixKey, type: pixType },
             responsible: editingResponsible,
+            preferredRecipient: editingPreferredRecipient,
             isHalf: isHalf
         });
     };
@@ -329,6 +332,29 @@ function ParticipantRow({ participant, allParticipants, onSave, products, onTogg
                                                 className="w-full bg-charcoal-700 border border-charcoal-600 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-ember-500 transition-colors"
                                             >
                                                 <option value="">A própria pessoa ({participant.name})</option>
+                                                <hr className="border-white/10" />
+                                                {allParticipants
+                                                    .filter(p => p.name !== participant.name)
+                                                    .map(p => (
+                                                        <option key={p.name} value={p.name}>{p.name}</option>
+                                                    ))
+                                                }
+                                            </select>
+                                        </div>
+
+                                        <div className="pt-2 border-t border-white/5">
+                                            <label className="block text-xs uppercase tracking-wider text-charcoal-500 font-bold mb-1">
+                                                Pagar preferencialmente para: <span className="text-xxs font-normal normal-case opacity-60">(opcional)</span>
+                                            </label>
+                                            <p className="text-xs text-charcoal-400 mb-2">
+                                                Se esta pessoa dever e o destinatário escolhido tiver saldo credor, o sistema tentará sugerir o pagamento diretamente a ele.
+                                            </p>
+                                            <select
+                                                value={editingPreferredRecipient}
+                                                onChange={(e) => setEditingPreferredRecipient(e.target.value)}
+                                                className="w-full bg-charcoal-700 border border-charcoal-600 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-ember-500 transition-colors"
+                                            >
+                                                <option value="">Sem preferência (deixar o algoritmo otimizar)</option>
                                                 <hr className="border-white/10" />
                                                 {allParticipants
                                                     .filter(p => p.name !== participant.name)

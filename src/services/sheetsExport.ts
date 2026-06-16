@@ -66,13 +66,14 @@ export async function exportBarbecueToGoogleSheets(
         const mainValues = [mainHeader, ...mainRows, mainTotal];
 
         // --- Participantes Sheet ---
-        const partHeader = ['Nome', 'Pix Key', 'Pix Type', 'Responsible', 'Meia'];
+        const partHeader = ['Nome', 'Pix Key', 'Pix Type', 'Responsible', 'Meia', 'PreferredRecipient'];
         const partRows = (data.participants || []).map(p => [
             p.name,
             p.pix?.key || '',
             p.pix?.type || '',
             p.paymentResponsible || '',
-            p.isHalf ? 'SIM' : 'NÃO'
+            p.isHalf ? 'SIM' : 'NÃO',
+            p.preferredRecipient || ''
         ]);
         const partValues = [partHeader, ...partRows];
 

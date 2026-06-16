@@ -158,6 +158,36 @@ export function calculateStats(
         }
     });
 
+    const settlements: Transaction[] = [];
+
+    // Pre-settlement phase for preferred recipients
+    participantMap.forEach(p => {
+        if (p.preferredRecipient) {
+            const debtorName = p.name;
+            const creditorName = p.preferredRecipient;
+
+            const debtorBalance = shadowBalances.get(debtorName) || 0;
+            const creditorBalance = shadowBalances.get(creditorName) || 0;
+
+            if (debtorBalance < -0.01 && creditorBalance > 0.01) {
+                const debt = -debtorBalance;
+                const credit = creditorBalance;
+                const amount = Math.min(debt, credit);
+
+                if (amount > 0.01) {
+                    settlements.push({
+                        from: debtorName,
+                        to: creditorName,
+                        amount: Number(amount.toFixed(2))
+                    });
+
+                    shadowBalances.set(debtorName, debtorBalance + amount);
+                    shadowBalances.set(creditorName, creditorBalance - amount);
+                }
+            }
+        }
+    });
+
     // Run settlement algorithm
     const creditors: { name: string, balance: number }[] = [];
     const debtors: { name: string, balance: number }[] = [];
@@ -173,7 +203,6 @@ export function calculateStats(
     creditors.sort((a, b) => b.balance - a.balance);
     debtors.sort((a, b) => b.balance - a.balance);
 
-    const settlements: Transaction[] = [];
     let cIdx = 0;
     let dIdx = 0;
 
@@ -312,9 +341,9 @@ function parseSheetData(rows: string[][], sheetName: string, participantRows: st
         isEmpty = true;
     }
 
-    // Parse Participant Meta Data (PIX + Responsible + Meia)
-    // Expected: Name (A), Key (B), Type (C), Responsible (D), Meia (E)
-    const metaMap = new Map<string, { pix?: { key: string, type: any }, responsible?: string, isHalf?: boolean }>();
+    // Parse Participant Meta Data (PIX + Responsible + Meia + PreferredRecipient)
+    // Expected: Name (A), Key (B), Type (C), Responsible (D), Meia (E), PreferredRecipient (F)
+    const metaMap = new Map<string, { pix?: { key: string, type: any }, responsible?: string, preferredRecipient?: string, isHalf?: boolean }>();
     participantRows.forEach(row => {
         if (row.length >= 1) {
             const name = row[0]?.trim();
@@ -322,11 +351,13 @@ function parseSheetData(rows: string[][], sheetName: string, participantRows: st
             const type = (row[2]?.trim() as any) || 'CPF';
             const responsible = row[3]?.trim(); // Col D
             const isHalf = row[4]?.trim()?.toUpperCase() === 'SIM' || row[4]?.trim()?.toLowerCase() === 'true'; // Col E
+            const preferredRecipient = row[5]?.trim(); // Col F
 
             if (name) {
                 const data: any = {};
                 if (key) data.pix = { key, type };
                 if (responsible) data.responsible = responsible;
+                if (preferredRecipient) data.preferredRecipient = preferredRecipient;
                 if (isHalf) data.isHalf = true;
                 metaMap.set(name, data);
             }
@@ -360,6 +391,7 @@ function parseSheetData(rows: string[][], sheetName: string, participantRows: st
                             netBalance: 0,
                             pix: meta?.pix,
                             paymentResponsible: meta?.responsible,
+                            preferredRecipient: meta?.preferredRecipient,
                             isHalf: meta?.isHalf || false
                         });
                     }
@@ -410,7 +442,8 @@ function parseSheetData(rows: string[][], sheetName: string, participantRows: st
                     totalConsumed: 0,
                     netBalance: 0,
                     pix: meta?.pix,
-                    paymentResponsible: meta?.responsible
+                    paymentResponsible: meta?.responsible,
+                    preferredRecipient: meta?.preferredRecipient
                 });
             }
 
@@ -543,7 +576,7 @@ export async function deleteParticipantFromSheet(
 
 export async function saveParticipantData(
     name: string,
-    data: { pix?: { key: string; type: any }; responsible?: string; isHalf?: boolean },
+    data: { pix?: { key: string; type: any }; responsible?: string; preferredRecipient?: string; isHalf?: boolean },
     customUrlOrId?: string,
     _accessToken?: string
 ) {
@@ -552,6 +585,7 @@ export async function saveParticipantData(
     await saveParticipantDataInBarbecue(id, name, {
         pix: data.pix,
         paymentResponsible: data.responsible,
+        preferredRecipient: data.preferredRecipient,
         isHalf: data.isHalf
     });
 }

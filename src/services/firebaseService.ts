@@ -168,6 +168,7 @@ export function subscribeToBarbecue(id: string, callback: (data: SheetData) => v
                 netBalance: 0,
                 pix: p.pix,
                 paymentResponsible: p.paymentResponsible,
+                preferredRecipient: p.preferredRecipient,
                 isHalf: p.isHalf
             });
         });
@@ -227,6 +228,7 @@ export async function getBarbecueData(id: string): Promise<SheetData> {
             netBalance: 0,
             pix: p.pix,
             paymentResponsible: p.paymentResponsible,
+            preferredRecipient: p.preferredRecipient,
             isHalf: p.isHalf
         });
     });
@@ -379,7 +381,7 @@ export async function deleteParticipantFromBarbecue(id: string, name: string): P
 export async function saveParticipantDataInBarbecue(
     id: string, 
     name: string, 
-    updatedData: { pix?: { key: string; type: 'CPF' | 'CNPJ' | 'EMAIL' | 'PHONE' | 'RANDOM' }; paymentResponsible?: string; isHalf?: boolean }
+    updatedData: { pix?: { key: string; type: 'CPF' | 'CNPJ' | 'EMAIL' | 'PHONE' | 'RANDOM' }; paymentResponsible?: string; preferredRecipient?: string; isHalf?: boolean }
 ): Promise<void> {
     const docRef = doc(db, 'barbecues', id);
     const docSnap = await getDoc(docRef);

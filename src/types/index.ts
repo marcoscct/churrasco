@@ -17,6 +17,7 @@ export interface Participant {
         type: 'CPF' | 'CNPJ' | 'EMAIL' | 'PHONE' | 'RANDOM';
     };
     paymentResponsible?: string; // Name of the person paying for this participant
+    preferredRecipient?: string; // Name of the preferred recipient for this participant's payments
     isHalf?: boolean; // If true, this participant has a weight of 0.5 in the division
 }
 
