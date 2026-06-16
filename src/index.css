@@ -22,3 +22,24 @@
     @apply bg-clip-text text-transparent bg-gradient-to-r from-ember-400 to-red-600;
   }
 }
+
+/* Esconder Vercel Toolbar, Live Feedback e widgets de Speed Insights */
+vercel-toolbar,
+vercel-live-feedback,
+#vercel-live-feedback,
+.vercel-toolbar,
+[class*="vercel"],
+[id*="vercel"],
+[class*="Vercel"],
+[id*="Vercel"] {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  overflow: hidden !important;
+  position: absolute !important;
+  left: -9999px !important;
+}
+

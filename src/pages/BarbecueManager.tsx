@@ -1118,7 +1118,6 @@ export const BarbecueManager = () => {
 
               <ProductsTable
                 products={products}
-                debugInfo={debugInfo}
                 onEdit={(p) => {
                   setEditingProduct(p);
                   setIsProductModalOpen(true);
@@ -1251,7 +1250,7 @@ const Section = ({ title, icon, isExpanded, onToggle, children }: any) => {
   );
 };
 
-const ProductsTable = ({ products, debugInfo, onEdit, onDelete }: { products: Product[], debugInfo: SheetData['debugInfo'] | null, onEdit: (p: Product) => void, onDelete: (p: Product) => void }) => {
+const ProductsTable = ({ products, onEdit, onDelete }: { products: Product[], onEdit: (p: Product) => void, onDelete: (p: Product) => void }) => {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
 
   // Close menu on click outside
@@ -1263,25 +1262,8 @@ const ProductsTable = ({ products, debugInfo, onEdit, onDelete }: { products: Pr
 
   if (products.length === 0) {
     return (
-      <div className="text-charcoal-500 italic p-8 text-center space-y-4">
+      <div className="text-charcoal-500 italic p-8 text-center">
         <p>Nenhum produto encontrado.</p>
-        {debugInfo && (
-          <div className="text-left bg-charcoal-900 p-4 rounded-xl border border-charcoal-700 font-mono text-xs overflow-x-auto">
-            <p className="text-ember-500 font-bold mb-2">Informações de Depuração:</p>
-            <p>Nome da Planilha: <span className="text-white">{debugInfo.sheetName}</span></p>
-            <p className="mt-2 text-charcoal-400">Primeiras 5 Linhas:</p>
-            {debugInfo.firstRows.map((row: string[], i: number) => (
-              <div key={i} className="flex gap-2 border-b border-white/5 py-1">
-                <span className="text-charcoal-500 w-6">{i + 1}:</span>
-                {row.map((cell, j) => (
-                  <span key={j} className="bg-white/5 px-1 rounded text-charcoal-300 whitespace-nowrap">
-                    {cell || '""'}
-                  </span>
-                ))}
-              </div>
-            ))}
-          </div>
-        )}
       </div>
     );
   }
