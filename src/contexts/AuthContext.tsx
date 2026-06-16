@@ -1,9 +1,32 @@
-
 import { createContext, useContext, useState, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import { googleLogout, useGoogleLogin } from '@react-oauth/google';
 import type { TokenResponse } from '@react-oauth/google';
 import { SCOPES } from '../config/auth';
+import { signInWithCredential, GoogleAuthProvider } from 'firebase/auth';
+import { auth } from '../config/firebase';
+
+// Intercept all fetch calls to detect Google API 401 Unauthorized responses (token expired)
+const originalFetch = window.fetch;
+window.fetch = async function (input, init) {
+    try {
+        const response = await originalFetch(input, init);
+        if (response.status === 401) {
+            let url = '';
+            if (typeof input === 'string') {
+                url = input;
+            } else if (input && typeof input === 'object' && 'url' in input) {
+                url = (input as any).url;
+            }
+            if (url && url.includes('googleapis.com')) {
+                window.dispatchEvent(new CustomEvent('google-token-expired'));
+            }
+        }
+        return response;
+    } catch (error) {
+        throw error;
+    }
+};
 
 interface UserProfile {
     id: string;
@@ -33,9 +56,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         if (storedToken && storedUser) {
             setToken(storedToken);
-            setUser(JSON.parse(storedUser));
+            const parsedUser = JSON.parse(storedUser);
+            setUser(parsedUser);
+
+            // Re-authenticate with Firebase Auth on reload
+            const credential = GoogleAuthProvider.credential(null, storedToken);
+            signInWithCredential(auth, credential).catch(err => {
+                console.error("Failed to re-authenticate with Firebase on reload:", err);
+            });
         }
         setIsLoading(false);
+    }, []);
+
+    const logout = () => {
+        googleLogout();
+        auth.signOut().catch(err => console.error("Firebase logout error:", err));
+        setToken(null);
+        setUser(null);
+        sessionStorage.removeItem('google_access_token');
+        sessionStorage.removeItem('google_user');
+    };
+
+    useEffect(() => {
+        const handleExpired = () => {
+            console.warn("Google Access Token Expired! Logging out...");
+            logout();
+            alert("Sua sessão expirou por segurança. Por favor, entre novamente para continuar.");
+        };
+
+        window.addEventListener('google-token-expired', handleExpired);
+        return () => {
+            window.removeEventListener('google-token-expired', handleExpired);
+        };
     }, []);
 
     const login = useGoogleLogin({
@@ -57,22 +109,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 };
                 setUser(cleanProfile);
                 sessionStorage.setItem('google_user', JSON.stringify(cleanProfile));
+
+                // Authenticate to Firebase Auth using Google Access Token
+                const credential = GoogleAuthProvider.credential(null, tokenResponse.access_token);
+                await signInWithCredential(auth, credential);
+                console.log("Firebase Auth signed in successfully!");
             } catch (error) {
-                console.error("Failed to fetch user profile", error);
+                console.error("Failed to complete Google/Firebase login flow", error);
             }
         },
         onError: error => console.error('Login Failed:', error),
         scope: SCOPES,
         flow: 'implicit'
     });
-
-    const logout = () => {
-        googleLogout();
-        setToken(null);
-        setUser(null);
-        sessionStorage.removeItem('google_access_token');
-        sessionStorage.removeItem('google_user');
-    };
 
     return (
         <AuthContext.Provider value={{ user, token, login, logout, isLoading }}>

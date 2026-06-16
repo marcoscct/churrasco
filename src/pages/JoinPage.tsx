@@ -1,14 +1,12 @@
 
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useAuth } from '../contexts/AuthContext';
-import { fetchSpreadsheetData } from '../services/sheets';
+import { getBarbecueData } from '../services/firebaseService';
 import type { Participant } from '../types';
 import { UserPlus, ArrowRight, Loader2 } from 'lucide-react';
 
 export function JoinPage() {
     const { id } = useParams<{ id: string }>();
-    const { token } = useAuth();
     const navigate = useNavigate();
     const [loading, setLoading] = useState(true);
     const [participants, setParticipants] = useState<Participant[]>([]);
@@ -16,13 +14,27 @@ export function JoinPage() {
     const [view, setView] = useState<'list' | 'new'>('list');
 
     useEffect(() => {
-        if (!token || !id) return;
+        if (!id) return;
 
         async function load() {
             try {
-                const url = `https://docs.google.com/spreadsheets/d/${id}`;
-                const data = await fetchSpreadsheetData(url, token!);
+                const data = await getBarbecueData(id!);
                 setParticipants(data.participants);
+
+                // Save to recent list in localStorage
+                try {
+                    const recentsStr = localStorage.getItem('recent_barbecues') || '[]';
+                    const recents = JSON.parse(recentsStr) as any[];
+                    const filtered = recents.filter((item: any) => item.id !== id);
+                    filtered.unshift({
+                        id,
+                        name: data.debugInfo?.sheetName || 'Churrasco Compartilhado',
+                        visitedAt: new Date().toISOString()
+                    });
+                    localStorage.setItem('recent_barbecues', JSON.stringify(filtered.slice(0, 10)));
+                } catch (e) {
+                    console.error("Failed to save recent barbecue:", e);
+                }
             } catch (err) {
                 console.error("Failed to load participants", err);
                 alert("Erro ao carregar lista de participantes.");
@@ -31,7 +43,7 @@ export function JoinPage() {
             }
         }
         load();
-    }, [token, id]);
+    }, [id]);
 
     const handleSelect = (name: string) => {
         navigate(`/churrasco/${id}?edit=${encodeURIComponent(name)}`);

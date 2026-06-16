@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Layout } from '../components/Layout';
@@ -23,8 +23,11 @@ import {
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import type { Product, Participant, Transaction, PaymentRecord, SheetData, Group } from '../types';
-import { fetchSpreadsheetData, deleteAllPaymentsFromSheet } from '../services/sheets';
+import { deleteAllPaymentsFromSheet } from '../services/sheets';
 import { ConfirmationModal, type ConfirmationState } from '../components/ConfirmationModal';
+import { subscribeToBarbecue } from '../services/firebaseService';
+import { exportBarbecueToGoogleSheets } from '../services/sheetsExport';
+import { FileSpreadsheet, Loader2 } from 'lucide-react';
 
 export const BarbecueManager = () => {
   const { id } = useParams<{ id: string }>();
@@ -38,6 +41,8 @@ export const BarbecueManager = () => {
   const [loading, setLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [exportedUrl, setExportedUrl] = useState<string | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [debugInfo, setDebugInfo] = useState<SheetData['debugInfo'] | null>(null);
@@ -57,7 +62,6 @@ export const BarbecueManager = () => {
   const [editingProduct, setEditingProduct] = useState<Product | undefined>(undefined);
   const [isManageParticipantsOpen, setIsManageParticipantsOpen] = useState(false);
   const [editingParticipant, setEditingParticipant] = useState<string | undefined>(undefined);
-  const [sheetUrl, setSheetUrl] = useState('');
 
   const [confirmation, setConfirmation] = useState<ConfirmationState>({
     isOpen: false,
@@ -67,68 +71,77 @@ export const BarbecueManager = () => {
     onConfirm: () => { }
   });
 
-  const loadData = useCallback(async (url?: string) => {
+  useEffect(() => {
+    if (!id) return;
+    
     setLoading(true);
     setError(null);
-    try {
-      const targetUrl = id ? `https://docs.google.com/spreadsheets/d/${id}` : (url || sheetUrl);
-      const data = await fetchSpreadsheetData(targetUrl, token!);
-
-      // Check for Empty Sheet
-      if (data.isEmpty) {
-        if (productsRef.current.length > 0 && confirm("A planilha parece estar vazia. Deseja exportar os dados atuais para ela?")) {
-          // Export Logic
-          import('../services/sheets').then(({ initializeSheet }) => {
-            initializeSheet(targetUrl, productsRef.current, participantsRef.current, paymentsRef.current, token!)
-              .then(() => {
-                alert("Dados exportados com sucesso!");
-                loadData(targetUrl); // Reload to confirm
-              })
-              .catch((e: any) => {
-                console.error("Erro na exportação", e);
-                setError("Falha ao exportar dados: " + e.message);
-              });
+    
+    const unsubscribe = subscribeToBarbecue(
+      id,
+      (data) => {
+        setProducts(data.products);
+        setParticipants(data.participants);
+        setSettlements(data.settlements || []);
+        setPayments(data.payments || []);
+        setGroups(data.groups || []);
+        setDebugInfo(data.debugInfo || null);
+        setLoading(false);
+        
+        // Save to recent list in localStorage
+        try {
+          const recentsStr = localStorage.getItem('recent_barbecues') || '[]';
+          const recents = JSON.parse(recentsStr) as any[];
+          const filtered = recents.filter((item: any) => item.id !== id);
+          filtered.unshift({
+              id,
+              name: data.debugInfo?.sheetName || 'Churrasco Compartilhado',
+              visitedAt: new Date().toISOString()
           });
-          setSheetUrl(targetUrl);
-          return;
+          localStorage.setItem('recent_barbecues', JSON.stringify(filtered.slice(0, 10)));
+        } catch (e) {
+            console.error("Failed to save recent barbecue:", e);
         }
-        // If denied, we load empty? Or keep local?
-        // User might want to start fresh.
+      },
+      (err) => {
+        setError(err.message || 'Erro ao sincronizar dados.');
+        setLoading(false);
       }
+    );
+    
+    return () => {
+      unsubscribe();
+    };
+  }, [id]);
 
-      setProducts(data.products);
-      setParticipants(data.participants);
-      setSettlements(data.settlements || []);
-      setPayments(data.payments || []);
-      setGroups(data.groups || []);
-      setDebugInfo(data.debugInfo || null);
-      if (url) setSheetUrl(url); // Confirm URL only on success
+  const handleExportToSheets = async () => {
+    if (!token) {
+      alert("Você precisa estar conectado com o Google para exportar.");
+      return;
+    }
+    setExporting(true);
+    setExportedUrl(null);
+    try {
+      const sheetData: SheetData = {
+        products,
+        participants,
+        settlements,
+        payments,
+        totalCost,
+        groups
+      };
+      const result = await exportBarbecueToGoogleSheets(debugInfo?.sheetName || "Churrasco", sheetData, token);
+      setExportedUrl(result.spreadsheetUrl);
+      alert("Churrasco exportado com sucesso! Clique no link exibido na tela para abrir no Google Planilhas.");
     } catch (err: any) {
       console.error(err);
-      setError(err.message || 'Failed to load data');
+      alert("Erro ao exportar: " + (err.message || err));
     } finally {
-      setLoading(false);
+      setExporting(false);
     }
-  }, [id, sheetUrl, token]);
-
-  const handleDisconnect = () => {
-    setSheetUrl('');
-    setDebugInfo(null);
-    // Keep local data or clear?
-    // User request: "Desvincular". Usually means keep data but stop syncing.
-    // So we do nothing to products/participants.
   };
 
-  useEffect(() => {
-    if (token) loadData();
-  }, [token, id, loadData]);
 
-  // Ensure sheetUrl is set if we have an ID, to show "Connected" status immediately
-  useEffect(() => {
-    if (id && !sheetUrl) {
-      setSheetUrl(`https://docs.google.com/spreadsheets/d/${id}`);
-    }
-  }, [id, sheetUrl]);
 
   // Handle URL Params for "Join" flow
   useEffect(() => {
@@ -161,9 +174,7 @@ export const BarbecueManager = () => {
   const handleResetPayments = async () => {
     setLoading(true);
     try {
-      await deleteAllPaymentsFromSheet(debugInfo?.sheetId !== undefined ? null : id || null, sheetUrl, token!);
-      // Reload data to reflect
-      await loadData();
+      await deleteAllPaymentsFromSheet(null, id!, token!);
     } catch (e) {
       console.error("Failed to reset payments", e);
       alert("Erro ao resetar pagamentos.");
@@ -173,20 +184,18 @@ export const BarbecueManager = () => {
 
   // Helper: Reset Spreadsheet Data Completely
   const handleResetSpreadsheet = async () => {
-    if (!sheetUrl || !debugInfo?.sheetName) return;
     setLoading(true);
     try {
       const { resetSpreadsheetData } = await import('../services/sheets');
-      await resetSpreadsheetData(sheetUrl, debugInfo.sheetName, token!);
+      await resetSpreadsheetData(id!, debugInfo?.sheetName || 'Churrasco', token!);
       setProducts([]);
       setParticipants([]);
       setSettlements([]);
       setPayments([]);
       setGroups([]);
-      await loadData();
     } catch (e) {
       console.error("Failed to reset spreadsheet", e);
-      alert("Erro ao resetar planilha.");
+      alert("Erro ao resetar dados.");
       setLoading(false);
     }
   };
@@ -227,22 +236,18 @@ export const BarbecueManager = () => {
       setSettlements(result.settlements);
       setPayments(result.payments || []);
 
-      // Persist to Sheet using NEW Insert logic
-      if (debugInfo?.sheetName && debugInfo?.sheetId !== undefined) {
-        addProductToSheet(
-          { ...data, price: data.price },
-          data.consumers,
-          debugInfo.sheetName,
-          debugInfo.sheetId,
-          participants, // full list for columns
-          sheetUrl,
-          token!
-        )
-          .catch(err => console.error("Failed to add product", err))
-          .finally(() => setIsSyncing(false));
-      } else {
-        setIsSyncing(false);
-      }
+      // Persist to Firebase
+      addProductToSheet(
+        { ...data, price: data.price },
+        data.consumers,
+        debugInfo?.sheetName || 'Churrasco',
+        debugInfo?.sheetId || 0,
+        participants, // full list for columns
+        id!,
+        token!
+      )
+        .catch(err => console.error("Failed to add product", err))
+        .finally(() => setIsSyncing(false));
     });
 
     console.log("Saving new product:", data);
@@ -317,16 +322,12 @@ export const BarbecueManager = () => {
       setSettlements(result.settlements);
       setPayments(result.payments || []);
 
-      // PERSIST to Sheet
-      if (debugInfo?.sheetName) {
-        updateProductInSheet(productToSave, result.participants, debugInfo.sheetName, sheetUrl)
-          .catch(err => {
-            console.error("Failed to update product in sheet", err);
-          })
-          .finally(() => setIsSyncing(false));
-      } else {
-        setIsSyncing(false);
-      }
+      // PERSIST to Firebase
+      updateProductInSheet(productToSave, result.participants, debugInfo?.sheetName || 'Churrasco', id!)
+        .catch(err => {
+          console.error("Failed to update product", err);
+        })
+        .finally(() => setIsSyncing(false));
     });
   };
 
@@ -399,30 +400,25 @@ export const BarbecueManager = () => {
       setSettlements(result.settlements);
       setPayments(result.payments || []);
 
-      // 4. Persist
-      if (debugInfo?.sheetName && debugInfo?.sheetId !== undefined) {
-        addPaymentToSheet(payer, receiver, amount, debugInfo.sheetName, debugInfo.sheetId, participants, sheetUrl, token!)
-          .then((realId) => {
-            console.log("Payment persisted. Real ID:", realId);
-            const realPaymentId = 'pay-' + realId;
+      // 4. Persist to Firebase
+      addPaymentToSheet(payer, receiver, amount, debugInfo?.sheetName || 'Churrasco', debugInfo?.sheetId || 0, participants, id!, token!)
+        .then((realId) => {
+          console.log("Payment persisted. Real ID:", realId);
+          const realPaymentId = 'pay-' + realId;
 
-            // Update local payment state to replace temp ID with real ID
-            setPayments(prev => prev.map(p => {
-              if (p.id === tempId) {
-                return { ...p, id: realPaymentId };
-              }
-              return p;
-            }));
-          })
-          .catch(err => {
-            console.error("Failed to persist payment", err);
-            alert("Erro ao salvar pagamento na planilha. Recarregue a página.");
-            loadData();
-          })
-          .finally(() => setIsSyncing(false));
-      } else {
-        setIsSyncing(false);
-      }
+          // Update local payment state to replace temp ID with real ID
+          setPayments(prev => prev.map(p => {
+            if (p.id === tempId) {
+              return { ...p, id: realPaymentId };
+            }
+            return p;
+          }));
+        })
+        .catch(err => {
+          console.error("Failed to persist payment", err);
+          alert("Erro ao salvar pagamento. Recarregue a página.");
+        })
+        .finally(() => setIsSyncing(false));
     });
   };
 
@@ -456,21 +452,15 @@ export const BarbecueManager = () => {
       setSettlements(result.settlements);
       setPayments(result.payments || []);
 
-      // 4. Persist Deletion
-      if (debugInfo?.sheetName && debugInfo?.sheetId !== undefined) {
-        // We pass a dummy product object only with ID because that's what deleteProductFromSheet needs for Payments
-        const dummyProduct: any = { id: paymentId, isPayment: true };
-        deleteProductFromSheet(dummyProduct, debugInfo.sheetName, debugInfo.sheetId, sheetUrl)
-          .then(() => console.log("Payment deleted successfully"))
-          .catch(err => {
-            console.error("Failed to delete payment", err);
-            alert("Erro ao remover pagamento. Recarregue a página.");
-            loadData();
-          })
-          .finally(() => setIsSyncing(false));
-      } else {
-        setIsSyncing(false);
-      }
+      // 4. Persist Deletion to Firebase
+      const dummyProduct: any = { id: paymentId, isPayment: true };
+      deleteProductFromSheet(dummyProduct, debugInfo?.sheetName || 'Churrasco', debugInfo?.sheetId || 0, id!)
+        .then(() => console.log("Payment deleted successfully"))
+        .catch(err => {
+          console.error("Failed to delete payment", err);
+          alert("Erro ao remover pagamento.");
+        })
+        .finally(() => setIsSyncing(false));
     });
   };
 
@@ -505,18 +495,13 @@ export const BarbecueManager = () => {
       setSettlements(result.settlements);
       setPayments(result.payments || []);
 
-      if (debugInfo?.sheetName && debugInfo?.sheetId !== undefined) {
-        deleteProductFromSheet(product, debugInfo.sheetName, debugInfo.sheetId, sheetUrl)
-          .then(() => console.log("Product deleted successfully"))
-          .catch(err => {
-            console.error("Failed to delete product", err);
-            alert("Erro ao remover produto da planilha.");
-            loadData();
-          })
-          .finally(() => setIsSyncing(false));
-      } else {
-        setIsSyncing(false);
-      }
+      deleteProductFromSheet(product, debugInfo?.sheetName || 'Churrasco', debugInfo?.sheetId || 0, id!)
+        .then(() => console.log("Product deleted successfully"))
+        .catch(err => {
+          console.error("Failed to delete product", err);
+          alert("Erro ao remover produto.");
+        })
+        .finally(() => setIsSyncing(false));
     });
   };
 
@@ -582,19 +567,14 @@ export const BarbecueManager = () => {
       setSettlements(result.settlements);
       setPayments(result.payments || []); // Might remove payments involving this person
 
-      // Persist
-      if (debugInfo?.sheetName && debugInfo?.sheetId !== undefined) {
-        deleteParticipantFromSheet(name, debugInfo.sheetName, debugInfo.sheetId, sheetUrl)
-          .then(() => console.log("Removed participant"))
-          .catch(err => {
-            console.error("Failed to remove participant", err);
-            alert("Erro ao remover participante da planilha.");
-            loadData();
-          })
-          .finally(() => setIsSyncing(false));
-      } else {
-        setIsSyncing(false);
-      }
+      // Persist to Firebase
+      deleteParticipantFromSheet(name, debugInfo?.sheetName || 'Churrasco', debugInfo?.sheetId || 0, id!)
+        .then(() => console.log("Removed participant"))
+        .catch(err => {
+          console.error("Failed to remove participant", err);
+          alert("Erro ao remover participante.");
+        })
+        .finally(() => setIsSyncing(false));
     });
   };
 
@@ -621,10 +601,8 @@ export const BarbecueManager = () => {
       setParticipants(result.participants);
       setSettlements(result.settlements);
 
-      if (debugInfo?.sheetName) {
-        updateProductInSheet({ ...targetProduct, payer: newPayer }, result.participants, debugInfo.sheetName, sheetUrl)
-          .catch(err => console.error("Failed to update payer", err));
-      }
+      updateProductInSheet({ ...targetProduct, payer: newPayer }, result.participants, debugInfo?.sheetName || 'Churrasco', id!)
+        .catch(err => console.error("Failed to update payer", err));
     });
   };
 
@@ -680,18 +658,17 @@ export const BarbecueManager = () => {
 
     console.log("Updated participant:", name, data);
 
-    // Persist to Sheet
-    if (!found && debugInfo?.sheetName && debugInfo?.sheetId !== undefined) {
-      // NEW Participant -> Insert Column
+    // Persist to Firebase
+    if (!found) {
       import('../services/sheets').then(({ addParticipantToSheet }) => {
-        addParticipantToSheet(name, debugInfo.sheetName, debugInfo!.sheetId!, sheetUrl)
-          .catch(err => console.error("Failed to add participant col", err));
+        addParticipantToSheet(name, debugInfo?.sheetName || 'Churrasco', debugInfo?.sheetId || 0, id!)
+          .catch(err => console.error("Failed to add participant", err));
       });
     }
 
     if (data) {
       import('../services/sheets').then(({ saveParticipantData }) => {
-        saveParticipantData(name, data, sheetUrl).catch(err => {
+        saveParticipantData(name, data, id!).catch(err => {
           console.error("Falha ao salvar dados do participante", err);
         });
       });
@@ -729,21 +706,18 @@ export const BarbecueManager = () => {
     setParticipants(updated);
     console.log("Bulk adding participants:", newNames);
 
-    if (debugInfo?.sheetName && debugInfo?.sheetId !== undefined) {
-      setIsSyncing(true);
-      try {
-        const { addParticipantToSheet } = await import('../services/sheets');
-        // Add them sequentially to avoid concurrent update conflicts
-        for (const name of newNames) {
-          await addParticipantToSheet(name, debugInfo.sheetName, debugInfo.sheetId, sheetUrl, token!);
-        }
-      } catch (err) {
-        console.error("Failed to bulk add participants to sheet", err);
-        alert("Erro ao salvar alguns participantes na planilha.");
-      } finally {
-        setIsSyncing(false);
-        loadData();
+    setIsSyncing(true);
+    try {
+      const { addParticipantToSheet } = await import('../services/sheets');
+      // Add them sequentially to avoid concurrent update conflicts
+      for (const name of newNames) {
+        await addParticipantToSheet(name, debugInfo?.sheetName || 'Churrasco', debugInfo?.sheetId || 0, id!, token!);
       }
+    } catch (err) {
+      console.error("Failed to bulk add participants", err);
+      alert("Erro ao salvar alguns participantes.");
+    } finally {
+      setIsSyncing(false);
     }
   };
 
@@ -751,17 +725,15 @@ export const BarbecueManager = () => {
     setGroups(updatedGroups);
     console.log("Saving groups:", updatedGroups);
 
-    if (debugInfo?.sheetName) {
-      setIsSyncing(true);
-      try {
-        const { saveGroupsToSheet } = await import('../services/sheets');
-        await saveGroupsToSheet(updatedGroups, sheetUrl, token!);
-      } catch (err) {
-        console.error("Failed to save groups", err);
-        alert("Erro ao salvar grupos na planilha.");
-      } finally {
-        setIsSyncing(false);
-      }
+    setIsSyncing(true);
+    try {
+      const { saveGroupsToSheet } = await import('../services/sheets');
+      await saveGroupsToSheet(updatedGroups, id!, token!);
+    } catch (err) {
+      console.error("Failed to save groups", err);
+      alert("Erro ao salvar grupos.");
+    } finally {
+      setIsSyncing(false);
     }
   };
 
@@ -800,46 +772,12 @@ export const BarbecueManager = () => {
           </div>
 
 
-          <div className="w-full max-w-lg mt-4">
-            <div className="flex gap-2">
-              <div className="flex-1 relative">
-                <input
-                  type="text"
-                  placeholder="Cole o link da planilha Google aqui..."
-                  className="w-full bg-charcoal-700/50 text-white rounded-lg pl-10 pr-4 py-3 border border-charcoal-600 focus:border-ember-500 focus:ring-1 focus:ring-ember-500 transition-all outline-none"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      loadData((e.currentTarget as HTMLInputElement).value);
-                      (e.currentTarget as HTMLInputElement).value = ''; // Clear input usually? Or keep?
-                      // If we setSheetUrl state, maybe clear input to show status below.
-                      (e.currentTarget as HTMLInputElement).value = '';
-                    }
-                  }}
-                />
-                <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/3/30/Google_Sheets_logo_%282014-2020%29.svg/512px-Google_Sheets_logo_%282014-2020%29.svg.png"
-                  className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 opacity-70" alt="Sheet" />
-              </div>
-            </div>
-
-            {/* Connection Status */}
-            {sheetUrl && (
-              <div className="flex items-center justify-between bg-green-500/10 border border-green-500/20 rounded-lg px-4 py-2 mt-2">
-                <div className="flex items-center gap-2 overflow-hidden">
-                  <div className="w-2 h-2 rounded-full bg-green-500 shrink-0 animate-pulse" />
-                  <span className="text-green-400 text-sm font-medium truncate">
-                    Vinculado: <span className="text-white">{debugInfo?.sheetName || 'Planilha'}</span>
-                  </span>
-                </div>
-                <button
-                  onClick={handleDisconnect}
-                  className="text-charcoal-400 hover:text-red-400 p-1 rounded-md hover:bg-white/5 transition-colors"
-                  title="Desvincular"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            )}
-          </div>
+          <button
+            onClick={() => navigate('/dashboard')}
+            className="mt-4 px-6 py-3 bg-ember-600 hover:bg-ember-500 text-white font-bold rounded-xl transition-colors shadow-lg shadow-ember-900/20 active:scale-95"
+          >
+            Voltar para o Painel
+          </button>
         </div>
       </Layout>
     );
@@ -908,8 +846,8 @@ export const BarbecueManager = () => {
 
             // Persist
             const targetProduct = updated.find(p => p.id === productId);
-            if (targetProduct && debugInfo?.sheetName) {
-              updateProductInSheet(targetProduct, result.participants, debugInfo.sheetName, sheetUrl)
+            if (targetProduct) {
+              updateProductInSheet(targetProduct, result.participants, debugInfo?.sheetName || 'Churrasco', id!)
                 .then(() => console.log("Updated product consumption"))
                 .catch(err => console.error("Failed to update consumption", err));
             }
@@ -940,8 +878,8 @@ export const BarbecueManager = () => {
 
             // Persist
             const targetProduct = updated.find(p => p.id === productId);
-            if (targetProduct && debugInfo?.sheetName) {
-              updateProductInSheet(targetProduct, result.participants, debugInfo.sheetName, sheetUrl)
+            if (targetProduct) {
+              updateProductInSheet(targetProduct, result.participants, debugInfo?.sheetName || 'Churrasco', id!)
                 .then(() => console.log("Updated product consumption"))
                 .catch(err => console.error("Failed to update consumption", err));
             }
@@ -975,8 +913,8 @@ export const BarbecueManager = () => {
 
       // Persist
       const targetProduct = updated.find(p => p.id === productId);
-      if (targetProduct && debugInfo?.sheetName) {
-        updateProductInSheet(targetProduct, result.participants, debugInfo.sheetName, sheetUrl)
+      if (targetProduct) {
+        updateProductInSheet(targetProduct, result.participants, debugInfo?.sheetName || 'Churrasco', id!)
           .then(() => console.log("Updated product consumption"))
           .catch(err => console.error("Failed to update consumption", err));
       }
@@ -1005,81 +943,93 @@ export const BarbecueManager = () => {
           productToEdit={editingProduct}
         />
 
-        {/* Sheet Input */}
+        {/* Header Bar com Controles */}
         <div className="bg-charcoal-900 border-b border-white/5 p-4 md:p-6 sticky top-0 md:relative z-40 backdrop-blur-md bg-opacity-90 md:bg-opacity-100">
-          <div className="max-w-7xl mx-auto flex gap-3">
-            <input
-              type="text"
-              value={sheetUrl}
-              onChange={(e) => setSheetUrl(e.target.value)}
-              placeholder="Cole o link da planilha Google aqui..."
-              className="flex-1 bg-charcoal-800 border-charcoal-700 text-white placeholder-charcoal-500 rounded-xl focus:ring-2 focus:ring-ember-500 focus:border-transparent transition-all shadow-inner"
-            />
-            <button
-              onClick={() => loadData(sheetUrl)}
-              className="w-full md:w-auto px-6 py-3 bg-charcoal-800 hover:bg-charcoal-700 text-white font-medium rounded-xl transition-all shadow-lg shadow-charcoal-900/20 border border-white/5 active:scale-95 flex items-center justify-center gap-2"
-            >
-              {loading ? <RefreshCw className="w-5 h-5 animate-spin" /> : "Carregar"}
-            </button>
+          <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+            {/* Título e Status */}
+            <div>
+              <div className="flex items-center gap-3">
+                <h1 className="text-xl md:text-2xl font-bold text-white tracking-tight">
+                  {debugInfo?.sheetName || 'Carregando Churrasco...'}
+                </h1>
+                <div className="flex items-center gap-1.5 px-2.5 py-0.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-full text-xs font-medium shrink-0">
+                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.6)]" />
+                  Firebase
+                </div>
+              </div>
+              <p className="text-xs text-charcoal-500 mt-0.5">ID: {id}</p>
+            </div>
+
+            {/* Ações */}
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => {
+                  const url = `${window.location.origin}${window.location.pathname}#/join/${id}`;
+                  navigator.clipboard.writeText(url);
+                  // Quick visual feedback
+                  const btn = document.getElementById('invite-btn');
+                  if (btn) {
+                    const originalText = btn.innerHTML;
+                    btn.innerHTML = '<span class="text-green-400 font-bold">Copiado!</span>';
+                    setTimeout(() => {
+                      btn.innerHTML = originalText;
+                    }, 2000);
+                  }
+                }}
+                id="invite-btn"
+                className="px-4 py-2 bg-charcoal-800 hover:bg-charcoal-700 border border-white/5 text-slate-200 hover:text-white rounded-xl text-sm font-medium transition-all active:scale-95 flex items-center gap-2"
+                title="Copiar Link de Convite"
+              >
+                <Share2 className="w-4 h-4 text-blue-400" />
+                Convidar
+              </button>
+
+              <button
+                onClick={handleExportToSheets}
+                disabled={exporting}
+                className="px-4 py-2 bg-charcoal-800 hover:bg-charcoal-700 border border-white/5 text-slate-200 hover:text-white disabled:opacity-50 rounded-xl text-sm font-medium transition-all active:scale-95 flex items-center gap-2"
+                title="Exportar para Google Planilhas"
+              >
+                {exporting ? (
+                  <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />
+                ) : (
+                  <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
+                )}
+                Exportar Planilha
+              </button>
+
+              <button
+                onClick={() => {
+                  setConfirmation({
+                    isOpen: true,
+                    title: "Resetar Churrasco",
+                    description: "Tem certeza que deseja apagar TODOS os participantes, itens, pagamentos e grupos deste churrasco? Esta ação é irreversível.",
+                    variant: 'danger',
+                    confirmLabel: 'Sim, resetar',
+                    onConfirm: handleResetSpreadsheet
+                  });
+                }}
+                className="px-4 py-2 bg-charcoal-800 hover:bg-charcoal-700 border border-white/5 text-slate-200 hover:text-white rounded-xl text-sm font-medium transition-all active:scale-95 flex items-center gap-2"
+                title="Resetar Dados"
+              >
+                <RefreshCw className="w-4 h-4 text-red-400" />
+                Resetar
+              </button>
+            </div>
           </div>
 
-          {/* Connection Status Indicator */}
-          {sheetUrl && debugInfo?.sheetName && (
-            <div className="mt-3 flex items-center justify-between bg-green-500/10 border border-green-500/20 rounded-lg px-4 py-2">
-              <div className="flex items-center gap-2 overflow-hidden">
-                <div className="w-2 h-2 rounded-full bg-green-500 shrink-0 animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.6)]" />
-                <span className="text-green-400 text-sm font-medium truncate">
-                  Vinculado: <span className="text-white font-bold">{debugInfo.sheetName}</span>
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => {
-                    const url = `${window.location.origin}${window.location.pathname}#/join/${id}`;
-                    navigator.clipboard.writeText(url);
-                    // Quick visual feedback
-                    const btn = document.getElementById('invite-btn');
-                    if (btn) {
-                      const originalText = btn.innerHTML;
-                      btn.innerHTML = '<span class="text-green-400 font-bold">Copiado!</span>';
-                      setTimeout(() => {
-                        btn.innerHTML = originalText;
-                      }, 2000);
-                    }
-                  }}
-                  id="invite-btn"
-                  className="text-blue-400 hover:text-blue-300 text-xs flex items-center gap-1 px-2 py-1 rounded-md hover:bg-white/5 transition-colors border border-transparent hover:border-blue-500/20"
-                  title="Copiar Link de Convite"
-                >
-                  <Share2 className="w-3 h-3" />
-                  Convidar
-                </button>
-                <button
-                  onClick={() => {
-                    setConfirmation({
-                      isOpen: true,
-                      title: "Resetar Planilha",
-                      description: "Tem certeza que deseja apagar TODOS os participantes, itens, pagamentos e grupos desta planilha? Esta ação é irreversível.",
-                      variant: 'danger',
-                      confirmLabel: 'Sim, resetar planilha',
-                      onConfirm: handleResetSpreadsheet
-                    });
-                  }}
-                  className="text-charcoal-400 hover:text-red-400 text-xs flex items-center gap-1 px-2 py-1 rounded-md hover:bg-white/5 transition-colors border border-transparent hover:border-red-500/20"
-                  title="Resetar Planilha"
-                >
-                  <RefreshCw className="w-3 h-3" />
-                  Resetar Planilha
-                </button>
-                <button
-                  onClick={handleDisconnect}
-                  className="text-charcoal-400 hover:text-red-400 text-xs flex items-center gap-1 px-2 py-1 rounded-md hover:bg-white/5 transition-colors border border-transparent hover:border-red-500/20"
-                  title="Desvincular Planilha"
-                >
-                  <Trash2 className="w-3 h-3" />
-                  Desvincular
-                </button>
-              </div>
+          {/* Toast / Alerta de exportação com sucesso */}
+          {exportedUrl && (
+            <div className="max-w-7xl mx-auto mt-4 p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl flex items-center justify-between text-emerald-300 text-xs animate-in slide-in-from-top-2">
+              <span>Planilha exportada com sucesso no seu Google Drive!</span>
+              <a 
+                href={exportedUrl} 
+                target="_blank" 
+                rel="noopener noreferrer" 
+                className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg transition-colors"
+              >
+                Abrir Planilha
+              </a>
             </div>
           )}
         </div>

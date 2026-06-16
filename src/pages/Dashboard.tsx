@@ -1,19 +1,30 @@
-
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { Plus, FolderOpen, LogOut, Flame, FileSpreadsheet, Loader2, ArrowRight, Trash2 } from 'lucide-react';
+import { Plus, FolderOpen, LogOut, Flame, FileSpreadsheet, Loader2, ArrowRight, Trash2, Users } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { listMockBarbecues, createBarbecue, signFile } from '../services/drive';
-import type { DriveFile } from '../services/drive';
-import { initializeSheet } from '../services/sheets';
+import { 
+    listBarbecues, 
+    createBarbecue, 
+    deleteBarbecue, 
+    createBarbecueWithData 
+} from '../services/firebaseService';
+import { fetchSpreadsheetData } from '../services/sheets';
 
 import useDrivePicker from 'react-google-drive-picker';
 import { GOOGLE_API_KEY, GOOGLE_CLIENT_ID } from '../config/auth';
 
+interface RecentBbq {
+    id: string;
+    name: string;
+    visitedAt: string;
+}
+
 export const Dashboard: React.FC = () => {
     const { user, logout, token } = useAuth();
     const navigate = useNavigate();
-    const [files, setFiles] = useState<DriveFile[]>([]);
+    
+    const [myBarbecues, setMyBarbecues] = useState<any[]>([]);
+    const [recentBarbecues, setRecentBarbecues] = useState<RecentBbq[]>([]);
     const [loading, setLoading] = useState(true);
     const [creating, setCreating] = useState(false);
     const [openPicker] = useDrivePicker();
@@ -23,50 +34,72 @@ export const Dashboard: React.FC = () => {
     const [importError, setImportError] = useState<string | null>(null);
 
     const loadList = async () => {
-        if (!token) return;
+        if (!user?.email) return;
         setLoading(true);
         try {
-            const list = await listMockBarbecues(token);
-            setFiles(list);
+            const list = await listBarbecues(user.email);
+            setMyBarbecues(list);
         } catch (error) {
-            console.error("Failed to list files", error);
+            console.error("Failed to list barbecues from Firestore", error);
         } finally {
             setLoading(false);
         }
     };
 
+    // Load both owner list and recent barbecues from localStorage
     useEffect(() => {
-        if (token) loadList();
-    }, [token]);
+        if (user?.email) {
+            loadList();
+        }
+        
+        // Load recent barbecues visited
+        try {
+            const storedRecents = localStorage.getItem('recent_barbecues');
+            if (storedRecents) {
+                const parsed = JSON.parse(storedRecents) as RecentBbq[];
+                // Filter out my own barbecues to avoid duplication, and sort by date
+                setRecentBarbecues(parsed);
+            }
+        } catch (e) {
+            console.error("Failed to parse recent barbecues", e);
+        }
+    }, [user?.email]);
 
     const handleCreate = async () => {
         const name = prompt("Nome do Churrasco:", "Churrasco do Fim de Semana");
-        if (!name || !token) return;
+        if (!name || !user?.email) return;
 
         setCreating(true);
         try {
-            const id = await createBarbecue(name, token);
-            await initializeSheet(id, [], [], [], token);
+            const id = await createBarbecue(name, user.email, user.name);
             navigate(`/churrasco/${id}`);
         } catch (error) {
-            console.error("Failed to create", error);
+            console.error("Failed to create barbecue in Firestore:", error);
             alert("Erro ao criar churrasco. Verifique o console.");
         } finally {
             setCreating(false);
         }
     };
 
-    const handleImport = async (fileId: string) => {
-        if (!fileId || !token) return;
+    const handleImport = async (fileId: string, fileName: string) => {
+        if (!fileId || !token || !user?.email) return;
 
         setImporting(true);
         setImportError(null);
         try {
-            await signFile(fileId, token);
-            loadList(); // Refresh list to show imported file
+            // 1. Fetch data from Google Sheet using user token
+            const url = `https://docs.google.com/spreadsheets/d/${fileId}`;
+            const sheetData = await fetchSpreadsheetData(url, token);
+            
+            // 2. Upload to Firestore
+            const cleanName = fileName.replace(/\.xlsx$/i, '').replace(/Planilha/i, '').trim();
+            const id = await createBarbecueWithData(cleanName || "Churrasco Importado", user.email, user.name, sheetData);
+            
+            // 3. Navigate to new page
+            navigate(`/churrasco/${id}`);
         } catch (error) {
-            console.error("Failed to import", error);
-            setImportError("Erro ao importar. Verifique se você tem permissão de EDITAR este arquivo.");
+            console.error("Failed to import spreadsheet", error);
+            setImportError("Erro ao importar a planilha. Verifique se o formato está correto e se o arquivo tem permissão de leitura.");
         } finally {
             setImporting(false);
         }
@@ -77,7 +110,7 @@ export const Dashboard: React.FC = () => {
             clientId: GOOGLE_CLIENT_ID,
             developerKey: GOOGLE_API_KEY,
             viewId: "SPREADSHEETS",
-            token: token || "", // Pass existing token if possible, or let picker handle it
+            token: token || "",
             showUploadView: true,
             showUploadFolders: true,
             supportDrives: true,
@@ -87,12 +120,29 @@ export const Dashboard: React.FC = () => {
                     const file = data.docs[0];
                     console.log("Picked file:", file);
                     if (file.id) {
-                        handleImport(file.id);
+                        handleImport(file.id, file.name || "Churrasco do Drive");
                     }
                 }
             },
         });
     };
+
+    const handleDelete = async (id: string, name: string) => {
+        if (confirm(`Deseja excluir definitivamente o churrasco "${name}"? Esta ação não pode ser desfeita.`)) {
+            setLoading(true);
+            try {
+                await deleteBarbecue(id);
+                loadList();
+            } catch (err) {
+                console.error("Failed to delete from Firestore:", err);
+                alert("Erro ao excluir o churrasco do banco de dados.");
+                setLoading(false);
+            }
+        }
+    };
+
+    // Filter local recents to not duplicate with own barbecues
+    const sharedRecents = recentBarbecues.filter(r => !myBarbecues.some(m => m.id === r.id));
 
     return (
         <div className="min-h-screen bg-slate-900 text-white p-4 md:p-8">
@@ -102,7 +152,7 @@ export const Dashboard: React.FC = () => {
                         <Flame className="w-6 h-6 text-white" />
                     </div>
                     <div>
-                        <h1 className="text-xl font-bold">Meus Churrascos</h1>
+                        <h1 className="text-xl font-bold">ChurrascoApp</h1>
                         <p className="text-xs text-slate-400">Bem-vindo, {user?.name}</p>
                     </div>
                 </div>
@@ -111,7 +161,7 @@ export const Dashboard: React.FC = () => {
                 </button>
             </header>
 
-            <main className="max-w-4xl mx-auto space-y-6">
+            <main className="max-w-4xl mx-auto space-y-8">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <button
                         onClick={handleCreate}
@@ -140,7 +190,7 @@ export const Dashboard: React.FC = () => {
                                 <FolderOpen className="w-6 h-6 text-blue-400" />
                             </div>
                         )}
-                        <span className="font-bold text-slate-200">{importing ? 'Importando...' : 'Selecionar do Drive'}</span>
+                        <span className="font-bold text-slate-200">{importing ? 'Importando...' : 'Importar do Drive'}</span>
                     </button>
                 </div>
 
@@ -151,9 +201,10 @@ export const Dashboard: React.FC = () => {
                     </div>
                 )}
 
-                <section>
-                    <div className="flex items-center justify-between mb-4">
-                        <h2 className="text-lg font-semibold text-slate-300">Recentes</h2>
+                {/* Owner's Barbecues */}
+                <section className="space-y-4">
+                    <div className="flex items-center justify-between">
+                        <h2 className="text-lg font-semibold text-slate-300">Meus Churrascos (Criador)</h2>
                         <button onClick={loadList} className="text-xs text-slate-500 hover:text-white">Atualizar</button>
                     </div>
 
@@ -162,52 +213,41 @@ export const Dashboard: React.FC = () => {
                             <Loader2 className="w-8 h-8 animate-spin mb-2 opacity-50" />
                             Carregando seus churrascos...
                         </div>
-                    ) : files.length === 0 ? (
+                    ) : myBarbecues.length === 0 ? (
                         <div className="bg-slate-800/50 border-2 border-dashed border-slate-700 rounded-3xl p-8 text-center flex flex-col items-center">
                             <div className="w-16 h-16 bg-slate-800 rounded-full flex items-center justify-center mb-4">
                                 <FileSpreadsheet className="w-8 h-8 text-slate-600" />
                             </div>
-                            <h3 className="text-slate-300 font-medium mb-1">Nenhum churrasco encontrado</h3>
-                            <p className="text-sm text-slate-500 max-w-xs">
-                                Crie um novo ou importe uma planilha existente para começar.
+                            <h3 className="text-slate-300 font-medium mb-1">Nenhum churrasco criado por você</h3>
+                            <p className="text-sm text-slate-500 max-w-xs mb-4">
+                                Crie um novo churrasco acima ou importe uma planilha para começar.
                             </p>
                         </div>
                     ) : (
                         <div className="grid gap-3">
-                            {files.map(f => (
+                            {myBarbecues.map(f => (
                                 <div
                                     key={f.id}
                                     onClick={() => navigate(`/churrasco/${f.id}`)}
                                     className="bg-slate-800 p-4 rounded-xl flex items-center justify-between border border-white/5 hover:border-orange-500/30 hover:bg-slate-700/80 transition-all cursor-pointer group"
                                 >
                                     <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-lg bg-green-900/20 flex items-center justify-center border border-green-500/20 group-hover:border-green-500/50 transition-colors">
-                                            <FileSpreadsheet className="w-5 h-5 text-green-500" />
+                                        <div className="w-10 h-10 rounded-lg bg-orange-950/20 flex items-center justify-center border border-orange-500/20 group-hover:border-orange-500/50 transition-colors">
+                                            <Flame className="w-5 h-5 text-orange-500" />
                                         </div>
                                         <div>
                                             <h4 className="font-semibold text-slate-200 group-hover:text-white transition-colors">{f.name}</h4>
-                                            <p className="text-xs text-slate-400">Criado em {f.createdTime ? new Date(f.createdTime).toLocaleDateString() : 'N/A'}</p>
+                                            <p className="text-xs text-slate-400">Criado em {f.createdAt ? new Date(f.createdAt).toLocaleDateString() : 'N/A'}</p>
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-2 shrink-0">
                                         <button
-                                            onClick={async (e) => {
+                                            onClick={(e) => {
                                                 e.stopPropagation();
-                                                if (confirm(`Deseja mover o churrasco "${f.name}" para a lixeira do Google Drive?`)) {
-                                                    setLoading(true);
-                                                    try {
-                                                        const { deleteBarbecueFile } = await import('../services/drive');
-                                                        await deleteBarbecueFile(f.id, token!);
-                                                        loadList();
-                                                    } catch (err) {
-                                                        console.error("Failed to delete", err);
-                                                        alert("Erro ao excluir arquivo do Drive.");
-                                                        setLoading(false);
-                                                    }
-                                                }
+                                                handleDelete(f.id, f.name);
                                             }}
                                             className="p-2 bg-transparent hover:bg-red-500/10 hover:text-red-400 rounded-lg text-slate-500 transition-colors"
-                                            title="Mover para a Lixeira do Drive"
+                                            title="Excluir Churrasco"
                                         >
                                             <Trash2 className="w-4 h-4" />
                                         </button>
@@ -218,6 +258,35 @@ export const Dashboard: React.FC = () => {
                         </div>
                     )}
                 </section>
+
+                {/* Shared / Visited Barbecues */}
+                {sharedRecents.length > 0 && (
+                    <section className="space-y-4 pt-4 border-t border-slate-800">
+                        <div className="flex items-center justify-between">
+                            <h2 className="text-lg font-semibold text-slate-300">Churrascos Compartilhados (Recentes)</h2>
+                        </div>
+                        <div className="grid gap-3">
+                            {sharedRecents.map(f => (
+                                <div
+                                    key={f.id}
+                                    onClick={() => navigate(`/churrasco/${f.id}`)}
+                                    className="bg-slate-800 p-4 rounded-xl flex items-center justify-between border border-white/5 hover:border-orange-500/30 hover:bg-slate-700/80 transition-all cursor-pointer group"
+                                >
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-lg bg-blue-950/20 flex items-center justify-center border border-blue-500/20 group-hover:border-blue-500/50 transition-colors">
+                                            <Users className="w-5 h-5 text-blue-500" />
+                                        </div>
+                                        <div>
+                                            <h4 className="font-semibold text-slate-200 group-hover:text-white transition-colors">{f.name}</h4>
+                                            <p className="text-xs text-slate-400">Acessado em {new Date(f.visitedAt).toLocaleDateString()}</p>
+                                        </div>
+                                    </div>
+                                    <ArrowRight className="w-5 h-5 text-slate-600 group-hover:text-orange-500 transition-colors" />
+                                </div>
+                            ))}
+                        </div>
+                    </section>
+                )}
             </main>
         </div>
     );
