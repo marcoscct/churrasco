@@ -89,10 +89,12 @@ export async function exportBarbecueToGoogleSheets(
         const payValues = [payHeader, ...payRows];
 
         // --- Grupos Sheet ---
-        const groupHeader = ['Grupo', 'Participantes'];
+        const groupHeader = ['Grupo', 'Participantes', 'Meia', 'Priorizar Pagamento Para'];
         const groupRows = (data.groups || []).map(g => [
             g.name,
-            g.members.join(', ')
+            g.members.join(', '),
+            g.isHalf ? 'SIM' : 'NÃO',
+            g.preferredRecipient || ''
         ]);
         const groupValues = [groupHeader, ...groupRows];
 

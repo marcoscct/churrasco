@@ -2,14 +2,15 @@ import { useState, useEffect } from 'react';
 import { X, Check, Plus, ShoppingBag, Save } from 'lucide-react';
 import { clsx } from 'clsx';
 import type { Participant, Product, Group } from '../types';
+import { useDialog } from '../contexts/DialogContext';
 
 interface AddProductModalProps {
     isOpen: boolean;
     onClose: () => void;
     participants: Participant[];
     groups?: Group[];
-    onAdd: (data: { name: string; price: number; payer: string; consumers: string[] }) => void;
-    onEdit?: (data: { name: string; price: number; payer: string; consumers: string[] }) => void;
+    onAdd: (data: { name: string; price: number; payer: string; consumers: string[]; linkedGroupName?: string }) => void;
+    onEdit?: (data: { name: string; price: number; payer: string; consumers: string[]; linkedGroupName?: string }) => void;
     productToEdit?: Product;
 }
 
@@ -18,6 +19,9 @@ export function AddProductModal({ isOpen, onClose, participants, groups = [], on
     const [price, setPrice] = useState('');
     const [payer, setPayer] = useState('');
     const [consumers, setConsumers] = useState<string[]>([]);
+    const [linkedGroupName, setLinkedGroupName] = useState<string | undefined>(undefined);
+    
+    const dialog = useDialog();
 
     useEffect(() => {
         if (isOpen) {
@@ -27,12 +31,14 @@ export function AddProductModal({ isOpen, onClose, participants, groups = [], on
                 setPrice(productToEdit.price.toString());
                 setPayer(productToEdit.payer);
                 setConsumers(productToEdit.consumers || []);
+                setLinkedGroupName(productToEdit.linkedGroupName);
             } else {
                 // Reset for add
                 setName('');
                 setPrice('');
                 setPayer(participants[0]?.name || '');
                 setConsumers([]);
+                setLinkedGroupName(undefined);
             }
         }
     }, [isOpen, productToEdit, participants]);
@@ -45,7 +51,10 @@ export function AddProductModal({ isOpen, onClose, participants, groups = [], on
 
         // Validation
         if (!name || isNaN(priceNum) || !payer || consumers.length === 0) {
-            alert("Por favor, preencha todos os campos e selecione ao menos um consumidor.");
+            dialog.alert(
+                "Campos Obrigatórios",
+                "Por favor, preencha todos os campos e selecione ao menos um consumidor."
+            );
             return;
         }
 
@@ -53,7 +62,8 @@ export function AddProductModal({ isOpen, onClose, participants, groups = [], on
             name,
             price: priceNum,
             payer,
-            consumers
+            consumers,
+            linkedGroupName
         };
 
         if (productToEdit && onEdit) {
@@ -64,10 +74,28 @@ export function AddProductModal({ isOpen, onClose, participants, groups = [], on
             setName('');
             setPrice('');
             setConsumers([]);
+            setLinkedGroupName(undefined);
         }
     };
 
-    const toggleConsumer = (pName: string) => {
+    const toggleConsumer = async (pName: string) => {
+        const isChecked = consumers.includes(pName);
+        if (linkedGroupName) {
+            if (isChecked) {
+                // Warning popup on unlinking
+                const confirmed = await dialog.confirm(
+                    "Desvincular do Grupo",
+                    `Ao remover "${pName}" deste item, o consumo deixará de ser associado ao grupo "${linkedGroupName}" e passará a ser um consumo de grupo de pessoas personalizado. Deseja continuar?`,
+                    "warning"
+                );
+                if (!confirmed) return;
+                setLinkedGroupName(undefined);
+            } else {
+                // Quietly unlink on addition
+                setLinkedGroupName(undefined);
+            }
+        }
+
         setConsumers(prev =>
             prev.includes(pName)
                 ? prev.filter(c => c !== pName)
@@ -75,31 +103,29 @@ export function AddProductModal({ isOpen, onClose, participants, groups = [], on
         );
     };
 
-    const toggleGroup = (groupMembers: string[]) => {
-        const validGroupMembers = groupMembers.filter(mName => participants.some(p => p.name === mName));
-        if (validGroupMembers.length === 0) return;
+    const toggleGroup = (group: Group) => {
+        const groupMembers = group.members.filter(mName => participants.some(p => p.name === mName));
+        if (groupMembers.length === 0) return;
 
-        const allSelected = validGroupMembers.every(name => consumers.includes(name));
-        if (allSelected) {
-            setConsumers(prev => prev.filter(c => !validGroupMembers.includes(c)));
+        const isLinked = linkedGroupName === group.name;
+        if (isLinked) {
+            // Unlink group and clear its members
+            setConsumers([]);
+            setLinkedGroupName(undefined);
         } else {
-            setConsumers(prev => {
-                const newConsumers = [...prev];
-                validGroupMembers.forEach(name => {
-                    if (!newConsumers.includes(name)) {
-                        newConsumers.push(name);
-                    }
-                });
-                return newConsumers;
-            });
+            // Link to this group and set consumers to its members
+            setConsumers(groupMembers);
+            setLinkedGroupName(group.name);
         }
     };
 
     const toggleAll = () => {
         if (consumers.length === participants.length) {
             setConsumers([]);
+            setLinkedGroupName(undefined);
         } else {
             setConsumers(participants.map(p => p.name));
+            setLinkedGroupName(undefined); // Clear since it is all participants, not a specific group
         }
     };
 
@@ -151,7 +177,7 @@ export function AddProductModal({ isOpen, onClose, participants, groups = [], on
                             <select
                                 value={payer}
                                 onChange={(e) => setPayer(e.target.value)}
-                                className="w-full bg-charcoal-950 border border-charcoal-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-ember-500 focus:ring-1 focus:ring-ember-500 transition-all appearance-none"
+                                className="w-full bg-charcoal-950 border border-charcoal-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-ember-500 focus:ring-1 focus:ring-ember-500 transition-all appearance-none animate-none"
                             >
                                 <option value="" disabled>Selecione...</option>
                                 {participants.map(p => (
@@ -179,22 +205,20 @@ export function AddProductModal({ isOpen, onClose, participants, groups = [], on
                                 <span className="text-[10px] uppercase font-bold text-charcoal-500 mr-1 self-center">Grupos:</span>
                                 {groups.map(g => {
                                     const validMembers = g.members.filter(m => participants.some(p => p.name === m));
-                                    const allSelected = validMembers.length > 0 && validMembers.every(name => consumers.includes(name));
-                                    const someSelected = !allSelected && validMembers.some(name => consumers.includes(name));
+                                    const isLinked = linkedGroupName === g.name;
                                     return (
                                         <button
                                             key={g.name}
                                             type="button"
-                                            onClick={() => toggleGroup(g.members)}
+                                            onClick={() => toggleGroup(g)}
                                             className={clsx(
-                                                "text-xxs px-2.5 py-1 rounded-md border font-medium transition-all",
-                                                allSelected
-                                                    ? "bg-ember-500/20 border-ember-500/40 text-ember-400 hover:bg-ember-500/30"
-                                                    : someSelected
-                                                        ? "bg-ember-500/10 border-ember-500/20 text-ember-400/80 hover:bg-ember-500/20"
-                                                        : "bg-charcoal-800 border-white/5 text-charcoal-400 hover:bg-charcoal-700 hover:text-white"
+                                                "text-xxs px-2.5 py-1 rounded-md border font-medium transition-all flex items-center gap-1",
+                                                isLinked
+                                                    ? "bg-ember-500/20 border-ember-500/50 text-ember-400 hover:bg-ember-500/30"
+                                                    : "bg-charcoal-800 border-white/5 text-charcoal-400 hover:bg-charcoal-700 hover:text-white"
                                             )}
                                         >
+                                            {isLinked && <Check className="w-2.5 h-2.5" />}
                                             {g.name} ({validMembers.length})
                                         </button>
                                     );

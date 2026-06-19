@@ -10,7 +10,8 @@ import {
     saveGroupsToBarbecue,
     addPaymentToBarbecue,
     deleteAllPaymentsFromBarbecue,
-    resetBarbecueData
+    resetBarbecueData,
+    saveParticipantsOrderInBarbecue
 } from './firebaseService';
 
 // Helper to extract Firebase Document ID from sheet URL or raw ID
@@ -51,9 +52,16 @@ export function parseGroups(rows: string[][]): Group[] {
         const name = row[0]?.trim();
         const membersStr = row[1];
         const members = membersStr ? membersStr.split(',').map(m => m.trim()).filter(Boolean) : [];
+        const isHalf = row[2]?.trim()?.toUpperCase() === 'SIM' || row[2]?.trim()?.toLowerCase() === 'true'; // Col C
+        const preferredRecipient = row[3]?.trim() || undefined; // Col D
 
         if (name) {
-            groups.push({ name, members });
+            groups.push({
+                name,
+                members,
+                isHalf: isHalf || undefined,
+                preferredRecipient
+            });
         }
     });
 
@@ -620,4 +628,12 @@ export async function deleteAllPaymentsFromSheet(
 ) {
     const id = getFirebaseId(customUrlOrId || spreadsheetId || '');
     await deleteAllPaymentsFromBarbecue(id);
+}
+
+export async function saveParticipantsOrder(
+    participants: Participant[],
+    customUrlOrId?: string
+) {
+    const id = getFirebaseId(customUrlOrId || '');
+    await saveParticipantsOrderInBarbecue(id, participants);
 }

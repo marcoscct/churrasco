@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { ArrowRight, CheckCircle2, ChevronDown, ChevronUp, Users, Check, CreditCard, CalendarClock, RotateCcw, Copy } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { Transaction, Participant, PaymentRecord } from '../types';
+import { useToast } from '../contexts/ToastContext';
 
 import { formatCurrency } from '../utils/format';
 
@@ -15,11 +16,38 @@ interface SettlementMatrixProps {
 }
 
 export function SettlementMatrix({ settlements, participants, payments, onAddPayment, onDeletePayment, isSyncing }: SettlementMatrixProps) {
-    const [activeTab, setActiveTab] = useState<'pending' | 'completed'>('pending');
+    const [activeTab, setActiveTab] = useState<'pending' | 'completed' | 'text'>('pending');
+    const [copied, setCopied] = useState(false);
+    const { showToast } = useToast();
+
+    // Group transactions by debtor ('from')
+    const groupedTransactions = settlements.reduce((acc, tx) => {
+        if (!acc[tx.from]) {
+            acc[tx.from] = [];
+        }
+        acc[tx.from].push(tx);
+        return acc;
+    }, {} as Record<string, Transaction[]>);
+
+    const shareText = settlements.length === 0
+        ? "Tudo quitado! Nenhum pagamento pendente."
+        : Object.entries(groupedTransactions)
+            .map(([debtor, txs]) => {
+                const lines = txs.map(tx => `${formatCurrency(tx.amount)} para ${tx.to}`);
+                return `${debtor.toUpperCase()}:\n${lines.join('\n')}`;
+            })
+            .join('\n\n');
+
+    const handleCopy = () => {
+        navigator.clipboard.writeText(shareText);
+        setCopied(true);
+        showToast("Resumo copiado com sucesso!", "success");
+        setTimeout(() => setCopied(false), 2000);
+    };
 
     return (
         <div className="space-y-4">
-            <div className="flex bg-charcoal-800/50 p-1.5 rounded-xl border border-white/5">
+            <div className="flex bg-charcoal-800/50 p-1.5 rounded-xl border border-white/5 gap-1">
                 <button
                     onClick={() => setActiveTab('pending')}
                     className={`flex-1 py-3 text-sm font-bold rounded-lg transition-all flex items-center justify-center gap-2 ${activeTab === 'pending' ? 'bg-gradient-to-r from-red-500/20 to-red-500/10 text-red-400 border border-red-500/20 shadow-inner' : 'text-charcoal-400 hover:text-white hover:bg-white/5'}`}
@@ -33,6 +61,12 @@ export function SettlementMatrix({ settlements, participants, payments, onAddPay
                 >
                     Concluídos
                     <span className={`px-2 py-0.5 rounded-full text-xs ${activeTab === 'completed' ? 'bg-green-500 text-white' : 'bg-charcoal-700'}`}>{payments.length}</span>
+                </button>
+                <button
+                    onClick={() => setActiveTab('text')}
+                    className={`flex-1 py-3 text-sm font-bold rounded-lg transition-all flex items-center justify-center gap-2 ${activeTab === 'text' ? 'bg-gradient-to-r from-blue-500/20 to-blue-500/10 text-blue-400 border border-blue-500/20 shadow-inner' : 'text-charcoal-400 hover:text-white hover:bg-white/5'}`}
+                >
+                    Resumo (Texto)
                 </button>
             </div>
 
@@ -58,7 +92,7 @@ export function SettlementMatrix({ settlements, participants, payments, onAddPay
                             />
                         ))
                     )
-                ) : (
+                ) : activeTab === 'completed' ? (
                     payments.length === 0 ? (
                         <div className="flex flex-col items-center justify-center py-12 text-charcoal-500 gap-4 bg-white/5 rounded-2xl border border-dashed border-charcoal-700">
                             <div className="w-16 h-16 rounded-full bg-charcoal-800 flex items-center justify-center">
@@ -93,6 +127,43 @@ export function SettlementMatrix({ settlements, participants, payments, onAddPay
                             </div>
                         ))
                     )
+                ) : (
+                    <div className="bg-charcoal-900/40 border border-white/5 rounded-2xl p-5 flex flex-col gap-4">
+                        <div className="flex items-center justify-between gap-4">
+                            <div className="flex flex-col">
+                                <h3 className="text-sm font-bold text-white uppercase tracking-wider">Formato de Texto</h3>
+                                <p className="text-xs text-charcoal-400">Copie o resumo para compartilhar com o grupo.</p>
+                            </div>
+                            <button
+                                onClick={handleCopy}
+                                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs transition-all shadow-md active:scale-95 border ${
+                                    copied
+                                        ? 'bg-green-500/20 text-green-400 border-green-500/30'
+                                        : 'bg-ember-600 hover:bg-ember-500 text-white border-transparent'
+                                }`}
+                            >
+                                {copied ? (
+                                    <>
+                                        <Check className="w-3.5 h-3.5" />
+                                        Copiado!
+                                    </>
+                                ) : (
+                                    <>
+                                        <Copy className="w-3.5 h-3.5" />
+                                        Copiar Resumo
+                                    </>
+                                )}
+                            </button>
+                        </div>
+                        <div className="relative">
+                            <textarea
+                                readOnly
+                                value={shareText}
+                                className="w-full h-60 bg-charcoal-950/80 border border-white/5 rounded-xl p-4 text-sm font-mono text-charcoal-200 focus:outline-none focus:border-white/10 resize-none scrollbar-thin"
+                                onClick={(e) => (e.target as HTMLTextAreaElement).select()}
+                            />
+                        </div>
+                    </div>
                 )}
             </div>
         </div>
@@ -101,6 +172,7 @@ export function SettlementMatrix({ settlements, participants, payments, onAddPay
 
 function SettlementItem({ tx, participants, onPay, isSyncing }: { tx: Transaction, participants: Participant[], onPay: () => void, isSyncing?: boolean }) {
     const [isExpanded, setIsExpanded] = useState(false);
+    const { showToast } = useToast();
 
     // Identify Group Logic
     const debtorName = tx.from;
@@ -185,7 +257,10 @@ function SettlementItem({ tx, participants, onPay, isSyncing }: { tx: Transactio
                                                 <span className="text-white font-mono break-all">{receiver.pix.key}</span>
                                             </div>
                                             <button
-                                                onClick={() => navigator.clipboard.writeText(receiver.pix?.key || "")}
+                                                onClick={() => {
+                                                    navigator.clipboard.writeText(receiver.pix?.key || "");
+                                                    showToast(`Chave PIX (${receiver.pix?.type}) copiada!`, "success");
+                                                }}
                                                 className="p-1.5 hover:bg-white/10 rounded-lg text-charcoal-400 hover:text-white transition-colors"
                                                 title="Copiar Chave"
                                             >

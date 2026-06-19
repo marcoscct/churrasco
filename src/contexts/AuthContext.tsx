@@ -81,7 +81,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const handleExpired = () => {
             console.warn("Google Access Token Expired! Logging out...");
             logout();
-            alert("Sua sessão expirou por segurança. Por favor, entre novamente para continuar.");
+            sessionStorage.setItem('session_expired_flag', 'true');
         };
 
         window.addEventListener('google-token-expired', handleExpired);

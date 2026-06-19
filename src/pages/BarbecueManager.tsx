@@ -13,13 +13,12 @@ import {
   DollarSign,
   RefreshCw,
   AlertCircle,
-  ChevronDown,
-  ChevronUp,
   MoreVertical,
   Edit,
   Trash2,
   ArrowLeft,
-  Share2
+  Share2,
+  Search
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import type { Product, Participant, Transaction, PaymentRecord, SheetData, Group } from '../types';
@@ -27,13 +26,20 @@ import { deleteAllPaymentsFromSheet } from '../services/sheets';
 import { ConfirmationModal, type ConfirmationState } from '../components/ConfirmationModal';
 import { subscribeToBarbecue } from '../services/firebaseService';
 import { exportBarbecueToGoogleSheets } from '../services/sheetsExport';
-import { FileSpreadsheet, Loader2 } from 'lucide-react';
+import { FileSpreadsheet, Loader2, Flame } from 'lucide-react';
+import { useToast } from '../contexts/ToastContext';
+import { useDialog } from '../contexts/DialogContext';
+
 
 export const BarbecueManager = () => {
   const { id } = useParams<{ id: string }>();
   const { token } = useAuth();
   const navigate = useNavigate();
+  const { showToast } = useToast();
+  const dialog = useDialog();
+  const [activeTab, setActiveTab] = useState<'overview' | 'items' | 'participants' | 'settlements'>('overview');
   const [products, setProducts] = useState<Product[]>([]);
+
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [settlements, setSettlements] = useState<Transaction[]>([]);
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
@@ -62,6 +68,113 @@ export const BarbecueManager = () => {
   const [editingProduct, setEditingProduct] = useState<Product | undefined>(undefined);
   const [isManageParticipantsOpen, setIsManageParticipantsOpen] = useState(false);
   const [editingParticipant, setEditingParticipant] = useState<string | undefined>(undefined);
+
+  const [participantSearchQuery, setParticipantSearchQuery] = useState('');
+  const [showAmounts, setShowAmounts] = useState(() => {
+    const saved = localStorage.getItem('bbq_show_amounts');
+    return saved !== null ? saved === 'true' : true;
+  });
+
+  useEffect(() => {
+    localStorage.setItem('bbq_show_amounts', showAmounts.toString());
+  }, [showAmounts]);
+
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+  const draggedIndexRef = useRef<number | null>(null);
+  useEffect(() => {
+    draggedIndexRef.current = draggedIndex;
+  }, [draggedIndex]);
+
+  const handleDragStart = (index: number) => {
+    if (participantSearchQuery) return;
+    setDraggedIndex(index);
+  };
+
+  const handleDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    const currentDragged = draggedIndexRef.current;
+    if (currentDragged === null || currentDragged === index || participantSearchQuery) return;
+
+    // Swap items in state
+    const currentParticipants = [...participantsRef.current];
+    const temp = currentParticipants[currentDragged];
+    currentParticipants[currentDragged] = currentParticipants[index];
+    currentParticipants[index] = temp;
+
+    setDraggedIndex(index);
+    setParticipants(currentParticipants);
+  };
+
+  const handleDragEnd = async () => {
+    const finalIndex = draggedIndexRef.current;
+    setDraggedIndex(null);
+
+    if (finalIndex !== null) {
+      try {
+        const { saveParticipantsOrder } = await import('../services/sheets');
+        await saveParticipantsOrder(participantsRef.current, id!);
+      } catch (err) {
+        console.error("Failed to save reordered participants:", err);
+      }
+    }
+  };
+
+  const handleTouchStart = (index: number) => {
+    if (participantSearchQuery) return;
+    setDraggedIndex(index);
+  };
+
+  useEffect(() => {
+    if (draggedIndex === null) return;
+
+    const handleTouchMove = (e: TouchEvent) => {
+      const currentDragged = draggedIndexRef.current;
+      if (currentDragged === null) return;
+
+      const touch = e.touches[0];
+      const element = document.elementFromPoint(touch.clientX, touch.clientY);
+      if (!element) return;
+
+      const card = element.closest('[data-participant-index]');
+      if (!card) return;
+
+      const targetIndex = Number(card.getAttribute('data-participant-index'));
+      if (isNaN(targetIndex) || targetIndex === currentDragged) return;
+
+      // Swap items in state
+      const currentParticipants = [...participantsRef.current];
+      const temp = currentParticipants[currentDragged];
+      currentParticipants[currentDragged] = currentParticipants[targetIndex];
+      currentParticipants[targetIndex] = temp;
+
+      setDraggedIndex(targetIndex);
+      setParticipants(currentParticipants);
+    };
+
+    const handleTouchEnd = async () => {
+      const finalIndex = draggedIndexRef.current;
+      setDraggedIndex(null);
+
+      if (finalIndex !== null) {
+        try {
+          const { saveParticipantsOrder } = await import('../services/sheets');
+          await saveParticipantsOrder(participantsRef.current, id!);
+        } catch (err) {
+          console.error("Failed to save reordered participants:", err);
+        }
+      }
+    };
+
+    window.addEventListener('touchmove', handleTouchMove, { passive: false });
+    window.addEventListener('touchend', handleTouchEnd);
+    window.addEventListener('touchcancel', handleTouchEnd);
+
+    return () => {
+      window.removeEventListener('touchmove', handleTouchMove);
+      window.removeEventListener('touchend', handleTouchEnd);
+      window.removeEventListener('touchcancel', handleTouchEnd);
+    };
+  }, [draggedIndex, id]);
 
   const [confirmation, setConfirmation] = useState<ConfirmationState>({
     isOpen: false,
@@ -116,7 +229,7 @@ export const BarbecueManager = () => {
 
   const handleExportToSheets = async () => {
     if (!token) {
-      alert("Você precisa estar conectado com o Google para exportar.");
+      showToast("Você precisa estar conectado com o Google para exportar.", "error");
       return;
     }
     setExporting(true);
@@ -132,10 +245,10 @@ export const BarbecueManager = () => {
       };
       const result = await exportBarbecueToGoogleSheets(debugInfo?.sheetName || "Churrasco", sheetData, token);
       setExportedUrl(result.spreadsheetUrl);
-      alert("Churrasco exportado com sucesso! Clique no link exibido na tela para abrir no Google Planilhas.");
+      showToast("Churrasco exportado com sucesso! Use o botão exibido no painel para abrir.", "success");
     } catch (err: any) {
       console.error(err);
-      alert("Erro ao exportar: " + (err.message || err));
+      showToast("Erro ao exportar: " + (err.message || err), "error");
     } finally {
       setExporting(false);
     }
@@ -177,7 +290,7 @@ export const BarbecueManager = () => {
       await deleteAllPaymentsFromSheet(null, id!, token!);
     } catch (e) {
       console.error("Failed to reset payments", e);
-      alert("Erro ao resetar pagamentos.");
+      dialog.alert("Erro", "Erro ao resetar pagamentos.");
       setLoading(false);
     }
   };
@@ -195,7 +308,7 @@ export const BarbecueManager = () => {
       setGroups([]);
     } catch (e) {
       console.error("Failed to reset spreadsheet", e);
-      alert("Erro ao resetar dados.");
+      dialog.alert("Erro", "Erro ao resetar dados.");
       setLoading(false);
     }
   };
@@ -256,12 +369,6 @@ export const BarbecueManager = () => {
   /* Logic Updates */
 
 
-  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
-    settlements: true,
-    participants: true,
-    products: true
-  });
-
   const [expandedParticipants, setExpandedParticipants] = useState<Record<string, boolean>>({});
 
   const toggleParticipantExpanded = (name: string) => {
@@ -269,10 +376,6 @@ export const BarbecueManager = () => {
       ...prev,
       [name]: !prev[name]
     }));
-  };
-
-  const toggleSection = (section: string) => {
-    setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
   };
 
   const processProductUpdate = async (data: { name: string; price: number; payer: string; consumers: string[] }) => {
@@ -416,7 +519,7 @@ export const BarbecueManager = () => {
         })
         .catch(err => {
           console.error("Failed to persist payment", err);
-          alert("Erro ao salvar pagamento. Recarregue a página.");
+          dialog.alert("Erro ao Salvar", "Erro ao salvar pagamento. Recarregue a página.");
         })
         .finally(() => setIsSyncing(false));
     });
@@ -458,7 +561,7 @@ export const BarbecueManager = () => {
         .then(() => console.log("Payment deleted successfully"))
         .catch(err => {
           console.error("Failed to delete payment", err);
-          alert("Erro ao remover pagamento.");
+          dialog.alert("Erro ao Remover", "Erro ao remover pagamento.");
         })
         .finally(() => setIsSyncing(false));
     });
@@ -499,7 +602,7 @@ export const BarbecueManager = () => {
         .then(() => console.log("Product deleted successfully"))
         .catch(err => {
           console.error("Failed to delete product", err);
-          alert("Erro ao remover produto.");
+          dialog.alert("Erro ao Remover", "Erro ao remover produto.");
         })
         .finally(() => setIsSyncing(false));
     });
@@ -537,7 +640,7 @@ export const BarbecueManager = () => {
   const handleRemoveParticipant = (name: string) => {
     if (isSyncing) return;
     if (participants.length <= 1) {
-      alert("Não é possível remover o único participante.");
+      dialog.alert("Operação Não Permitida", "Não é possível remover o único participante.");
       return;
     }
 
@@ -572,7 +675,7 @@ export const BarbecueManager = () => {
         .then(() => console.log("Removed participant"))
         .catch(err => {
           console.error("Failed to remove participant", err);
-          alert("Erro ao remover participante.");
+          dialog.alert("Erro ao Remover", "Erro ao remover participante.");
         })
         .finally(() => setIsSyncing(false));
     });
@@ -717,23 +820,98 @@ export const BarbecueManager = () => {
       }
     } catch (err) {
       console.error("Failed to bulk add participants", err);
-      alert("Erro ao salvar alguns participantes.");
+      dialog.alert("Erro ao Salvar", "Erro ao salvar alguns participantes.");
     } finally {
       setIsSyncing(false);
     }
   };
 
   const handleSaveGroups = async (updatedGroups: Group[]) => {
-    setGroups(updatedGroups);
     console.log("Saving groups:", updatedGroups);
-
     setIsSyncing(true);
     try {
+      // Map updatedGroups to ensure they all have IDs
+      const groupsWithIds = updatedGroups.map(g => ({
+        ...g,
+        id: g.id || `group_${Math.random().toString(36).substring(2, 9)}`
+      }));
+
+      const updatedProducts = [...products];
+      let productsChanged = false;
+
+      groupsWithIds.forEach(newGroup => {
+        // Find old group by id, or by name if id was not present
+        const oldGroup = groups.find(g => (newGroup.id && g.id === newGroup.id) || g.name === newGroup.name);
+        if (oldGroup) {
+          const nameChanged = oldGroup.name !== newGroup.name;
+          const addedMembers = newGroup.members.filter(m => !oldGroup.members.includes(m));
+          const removedMembers = oldGroup.members.filter(m => !newGroup.members.includes(m));
+
+          if (nameChanged || addedMembers.length > 0 || removedMembers.length > 0) {
+            updatedProducts.forEach((p) => {
+              if (p.linkedGroupName === oldGroup.name) {
+                let newConsumers = [...p.consumers];
+                let consumerListChanged = false;
+
+                if (nameChanged) {
+                  p.linkedGroupName = newGroup.name;
+                  productsChanged = true;
+                }
+
+                addedMembers.forEach(m => {
+                  if (!newConsumers.includes(m)) {
+                    newConsumers.push(m);
+                    consumerListChanged = true;
+                  }
+                });
+
+                removedMembers.forEach(m => {
+                  if (newConsumers.includes(m)) {
+                    newConsumers = newConsumers.filter(c => c !== m);
+                    consumerListChanged = true;
+                  }
+                });
+
+                if (consumerListChanged) {
+                  p.consumers = newConsumers;
+                  productsChanged = true;
+                }
+              }
+            });
+          }
+        }
+      });
+
+      // Clear linkedGroupName for deleted groups
+      const deletedGroupNames = groups
+        .filter(og => !groupsWithIds.some(ng => ng.id === og.id || ng.name === og.name))
+        .map(og => og.name);
+
+      if (deletedGroupNames.length > 0) {
+        updatedProducts.forEach(p => {
+          if (p.linkedGroupName && deletedGroupNames.includes(p.linkedGroupName)) {
+            p.linkedGroupName = undefined;
+            productsChanged = true;
+          }
+        });
+      }
+
+      // Save groups
       const { saveGroupsToSheet } = await import('../services/sheets');
-      await saveGroupsToSheet(updatedGroups, id!, token!);
+      await saveGroupsToSheet(groupsWithIds, id!, token!);
+      setGroups(groupsWithIds);
+
+      // Save products if changed
+      if (productsChanged) {
+        setProducts(updatedProducts);
+        const { doc, updateDoc } = await import('firebase/firestore');
+        const { db } = await import('../config/firebase');
+        const docRef = doc(db, 'barbecues', id!);
+        await updateDoc(docRef, { products: updatedProducts });
+      }
     } catch (err) {
       console.error("Failed to save groups", err);
-      alert("Erro ao salvar grupos.");
+      dialog.alert("Erro ao Salvar", "Erro ao salvar alterações dos grupos.");
     } finally {
       setIsSyncing(false);
     }
@@ -923,9 +1101,13 @@ export const BarbecueManager = () => {
     });
   };
 
+  const filteredParticipants = participants.filter(p =>
+    p.name.toLowerCase().includes(participantSearchQuery.toLowerCase())
+  );
+
   return (
     <Layout onBack={() => navigate('/dashboard')}>
-      <div className="min-h-screen bg-charcoal-950 pb-20 md:pb-0 relative">
+      <div className="min-h-screen bg-charcoal-950 pb-28 md:pb-8 relative">
         <ConfirmationModal
           state={confirmation}
           onClose={() => setConfirmation(prev => ({ ...prev, isOpen: false }))}
@@ -946,7 +1128,7 @@ export const BarbecueManager = () => {
         />
 
         {/* Header Bar com Controles */}
-        <div className="bg-charcoal-900 border-b border-white/5 p-4 md:p-6 sticky top-0 md:relative z-40 backdrop-blur-md bg-opacity-90 md:bg-opacity-100">
+        <div className="bg-charcoal-900 border-b border-white/5 p-4 md:p-6 mb-6 rounded-2xl relative z-40 backdrop-blur-md bg-opacity-95">
           <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             {/* Título e Status */}
             <div>
@@ -962,42 +1144,33 @@ export const BarbecueManager = () => {
               <p className="text-xs text-charcoal-500 mt-0.5">ID: {id}</p>
             </div>
 
-            {/* Ações */}
+            {/* Ações Rápidas no Header */}
             <div className="flex flex-wrap items-center gap-2">
               <button
                 onClick={() => {
                   const url = `${window.location.origin}${window.location.pathname}#/join/${id}`;
                   navigator.clipboard.writeText(url);
-                  // Quick visual feedback
-                  const btn = document.getElementById('invite-btn');
-                  if (btn) {
-                    const originalText = btn.innerHTML;
-                    btn.innerHTML = '<span class="text-green-400 font-bold">Copiado!</span>';
-                    setTimeout(() => {
-                      btn.innerHTML = originalText;
-                    }, 2000);
-                  }
+                  showToast("Link de convite copiado!", "success");
                 }}
-                id="invite-btn"
-                className="px-4 py-2 bg-charcoal-800 hover:bg-charcoal-700 border border-white/5 text-slate-200 hover:text-white rounded-xl text-sm font-medium transition-all active:scale-95 flex items-center gap-2"
+                className="px-3.5 py-2 bg-charcoal-800 hover:bg-charcoal-700 border border-white/5 text-slate-200 hover:text-white rounded-xl text-xs font-bold transition-all active:scale-95 flex items-center gap-2"
                 title="Copiar Link de Convite"
               >
-                <Share2 className="w-4 h-4 text-blue-400" />
+                <Share2 className="w-3.5 h-3.5 text-blue-400" />
                 Convidar
               </button>
 
               <button
                 onClick={handleExportToSheets}
                 disabled={exporting}
-                className="px-4 py-2 bg-charcoal-800 hover:bg-charcoal-700 border border-white/5 text-slate-200 hover:text-white disabled:opacity-50 rounded-xl text-sm font-medium transition-all active:scale-95 flex items-center gap-2"
+                className="px-3.5 py-2 bg-charcoal-800 hover:bg-charcoal-700 border border-white/5 text-slate-200 hover:text-white disabled:opacity-50 rounded-xl text-xs font-bold transition-all active:scale-95 flex items-center gap-2"
                 title="Exportar para Google Planilhas"
               >
                 {exporting ? (
-                  <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-400" />
                 ) : (
-                  <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
                 )}
-                Exportar Planilha
+                Planilha
               </button>
 
               <button
@@ -1011,10 +1184,10 @@ export const BarbecueManager = () => {
                     onConfirm: handleResetSpreadsheet
                   });
                 }}
-                className="px-4 py-2 bg-charcoal-800 hover:bg-charcoal-700 border border-white/5 text-slate-200 hover:text-white rounded-xl text-sm font-medium transition-all active:scale-95 flex items-center gap-2"
+                className="px-3.5 py-2 bg-charcoal-800 hover:bg-charcoal-700 border border-white/5 text-slate-200 hover:text-white rounded-xl text-xs font-bold transition-all active:scale-95 flex items-center gap-2"
                 title="Resetar Dados"
               >
-                <RefreshCw className="w-4 h-4 text-red-400" />
+                <RefreshCw className="w-3.5 h-3.5 text-red-400" />
                 Resetar
               </button>
             </div>
@@ -1036,150 +1209,345 @@ export const BarbecueManager = () => {
           )}
         </div>
 
-        {/* Overview Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-6 mb-8 md:mb-10">
-          <div className="col-span-2 md:col-span-1 glass-panel p-5 md:p-6 rounded-2xl flex items-center gap-4 relative overflow-hidden group">
-            <div className="absolute -right-4 -top-4 w-24 h-24 bg-ember-500/10 rounded-full blur-2xl group-hover:bg-ember-500/20 transition-all" />
-            <div className="p-3 bg-charcoal-800 rounded-xl shrink-0">
-              <DollarSign className="w-6 h-6 text-ember-400" />
-            </div>
-            <div>
-              <p className="text-charcoal-400 text-xs font-bold uppercase tracking-wider mb-1">Custo Total</p>
-              <p className="text-2xl font-bold text-white tracking-tight">
-                {loading ? (
-                  <span className="animate-pulse bg-charcoal-700 h-8 w-24 rounded block" />
-                ) : (
-                  `R$ ${totalCost.toFixed(2)}`
-                )}
-              </p>
-            </div>
-          </div>
-
-          <div className="glass-panel p-5 md:p-6 rounded-2xl flex items-center gap-4 relative overflow-hidden group">
-            <div className="absolute -right-4 -top-4 w-24 h-24 bg-blue-500/10 rounded-full blur-2xl group-hover:bg-blue-500/20 transition-all" />
-            <div className="p-3 bg-charcoal-800 rounded-xl shrink-0">
-              <Users className="w-6 h-6 text-blue-400" />
-            </div>
-            <div>
-              <p className="text-charcoal-400 text-xs font-bold uppercase tracking-wider mb-1">Participantes</p>
-              <p className="text-2xl font-bold text-white tracking-tight">
-                {loading ? <span className="animate-pulse bg-charcoal-700 h-8 w-12 rounded block" /> : participants.length}
-              </p>
-            </div>
-          </div>
-
-          <div className="glass-panel p-5 md:p-6 rounded-2xl flex items-center gap-4 relative overflow-hidden group">
-            <div className="absolute -right-4 -top-4 w-24 h-24 bg-green-500/10 rounded-full blur-2xl group-hover:bg-green-500/20 transition-all" />
-            <div className="p-3 bg-charcoal-800 rounded-xl shrink-0">
-              <ShoppingBag className="w-6 h-6 text-green-400" />
-            </div>
-            <div>
-              <p className="text-charcoal-400 text-xs font-bold uppercase tracking-wider mb-1">Itens</p>
-              <p className="text-2xl font-bold text-white tracking-tight">
-                {loading ? <span className="animate-pulse bg-charcoal-700 h-8 w-12 rounded block" /> : products.filter(p => !p.isPayment && !p.id.toString().startsWith('pay-')).length}
-              </p>
-            </div>
-          </div>
+        {/* Desktop Tab Bar */}
+        <div className="hidden md:flex bg-charcoal-900/40 p-1.5 rounded-xl border border-white/5 gap-1.5 mb-6">
+          <button
+            onClick={() => setActiveTab('overview')}
+            className={`flex-1 py-3 text-sm font-bold rounded-lg transition-all flex items-center justify-center gap-2 ${activeTab === 'overview' ? 'bg-gradient-to-r from-orange-500/20 to-orange-500/10 text-orange-400 border border-orange-500/20 shadow-inner' : 'text-charcoal-400 hover:text-white hover:bg-white/5'}`}
+          >
+            📊 Resumo Geral
+          </button>
+          <button
+            onClick={() => setActiveTab('items')}
+            className={`flex-1 py-3 text-sm font-bold rounded-lg transition-all flex items-center justify-center gap-2 ${activeTab === 'items' ? 'bg-gradient-to-r from-orange-500/20 to-orange-500/10 text-orange-400 border border-orange-500/20 shadow-inner' : 'text-charcoal-400 hover:text-white hover:bg-white/5'}`}
+          >
+            🍖 Itens do Churrasco ({products.filter(p => !p.isPayment && !p.id.toString().startsWith('pay-')).length})
+          </button>
+          <button
+            onClick={() => setActiveTab('participants')}
+            className={`flex-1 py-3 text-sm font-bold rounded-lg transition-all flex items-center justify-center gap-2 ${activeTab === 'participants' ? 'bg-gradient-to-r from-orange-500/20 to-orange-500/10 text-orange-400 border border-orange-500/20 shadow-inner' : 'text-charcoal-400 hover:text-white hover:bg-white/5'}`}
+          >
+            👥 Participantes ({participants.length})
+          </button>
+          <button
+            onClick={() => setActiveTab('settlements')}
+            className={`flex-1 py-3 text-sm font-bold rounded-lg transition-all flex items-center justify-center gap-2 ${activeTab === 'settlements' ? 'bg-gradient-to-r from-orange-500/20 to-orange-500/10 text-orange-400 border border-orange-500/20 shadow-inner' : 'text-charcoal-400 hover:text-white hover:bg-white/5'}`}
+          >
+            💸 Divisão / Acertos ({settlements.length})
+          </button>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 md:gap-8">
-          {/* Left Column: Settlements Matrix */}
-          <div className="space-y-6">
-            <SettlementMatrix
-              settlements={settlements}
-              participants={participants}
-              payments={payments}
-              onAddPayment={handleAddPayment}
-              onDeletePayment={handleDeletePayment}
-              isSyncing={isSyncing}
-            />
-          </div>
+        {/* Dynamic Tab Content */}
+        <div className="space-y-6">
+          {activeTab === 'overview' && (
+            <div className="space-y-6 animate-in fade-in duration-200">
+              {/* Overview Cards */}
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                <div className="col-span-2 md:col-span-1 glass-panel p-5 md:p-6 rounded-2xl flex items-center gap-4 relative overflow-hidden group">
+                  <div className="absolute -right-4 -top-4 w-24 h-24 bg-ember-500/10 rounded-full blur-2xl group-hover:bg-ember-500/20 transition-all" />
+                  <div className="p-3 bg-charcoal-800 rounded-xl shrink-0">
+                    <DollarSign className="w-6 h-6 text-ember-400" />
+                  </div>
+                  <div>
+                    <p className="text-charcoal-400 text-xs font-bold uppercase tracking-wider mb-1">Custo Total</p>
+                    <p className="text-2xl font-bold text-white tracking-tight">
+                      {loading ? (
+                        <span className="animate-pulse bg-charcoal-700 h-8 w-24 rounded block" />
+                      ) : (
+                        `R$ ${totalCost.toFixed(2)}`
+                      )}
+                    </p>
+                  </div>
+                </div>
 
-          {/* Right Column: Details */}
-          <div className="space-y-6">
-            <Section
-              title="Itens do Churrasco"
-              icon={<ShoppingBag className="w-5 h-5 text-green-400" />}
-              isExpanded={expandedSections['products']}
-              onToggle={() => toggleSection('products')}
-            >
-              <div className="mb-4">
+                <div className="glass-panel p-5 md:p-6 rounded-2xl flex items-center gap-4 relative overflow-hidden group">
+                  <div className="absolute -right-4 -top-4 w-24 h-24 bg-blue-500/10 rounded-full blur-2xl group-hover:bg-blue-500/20 transition-all" />
+                  <div className="p-3 bg-charcoal-800 rounded-xl shrink-0">
+                    <Users className="w-6 h-6 text-blue-400" />
+                  </div>
+                  <div>
+                    <p className="text-charcoal-400 text-xs font-bold uppercase tracking-wider mb-1">Participantes</p>
+                    <p className="text-2xl font-bold text-white tracking-tight">
+                      {loading ? <span className="animate-pulse bg-charcoal-700 h-8 w-12 rounded block" /> : participants.length}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="glass-panel p-5 md:p-6 rounded-2xl flex items-center gap-4 relative overflow-hidden group">
+                  <div className="absolute -right-4 -top-4 w-24 h-24 bg-green-500/10 rounded-full blur-2xl group-hover:bg-green-500/20 transition-all" />
+                  <div className="p-3 bg-charcoal-800 rounded-xl shrink-0">
+                    <ShoppingBag className="w-6 h-6 text-green-400" />
+                  </div>
+                  <div>
+                    <p className="text-charcoal-400 text-xs font-bold uppercase tracking-wider mb-1">Itens</p>
+                    <p className="text-2xl font-bold text-white tracking-tight">
+                      {loading ? <span className="animate-pulse bg-charcoal-700 h-8 w-12 rounded block" /> : products.filter(p => !p.isPayment && !p.id.toString().startsWith('pay-')).length}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Share / Invitation Card */}
+              <div className="glass-panel p-6 rounded-2xl border border-white/5 relative overflow-hidden flex flex-col md:flex-row md:items-center justify-between gap-6">
+                <div className="space-y-2">
+                  <h3 className="text-lg font-bold text-white">Chame seus amigos</h3>
+                  <p className="text-sm text-charcoal-400 max-w-xl">
+                    Compartilhe o link abaixo para que os participantes possam se cadastrar, adicionar o que consumiram e registrar chaves PIX de forma integrada.
+                  </p>
+                </div>
                 <button
                   onClick={() => {
-                    setEditingProduct(undefined);
-                    setIsProductModalOpen(true);
+                    const url = `${window.location.origin}${window.location.pathname}#/join/${id}`;
+                    navigator.clipboard.writeText(url);
+                    showToast("Link de convite copiado!", "success");
                   }}
-                  className="w-full py-3 bg-ember-600 hover:bg-ember-500 text-white rounded-xl transition-all shadow-lg shadow-ember-900/20 font-bold flex items-center justify-center gap-2 active:scale-95 group"
+                  className="px-5 py-3.5 bg-gradient-to-r from-orange-500 to-red-600 hover:brightness-110 text-white font-bold rounded-xl shadow-lg transition-all active:scale-95 flex items-center justify-center gap-2 whitespace-nowrap self-stretch md:self-auto"
                 >
-                  <div className="bg-white/20 p-1 rounded-full group-hover:bg-white/30 transition-colors">
-                    <Plus className="w-4 h-4" />
-                  </div>
-                  Adicionar Item/Bebida
+                  <Share2 className="w-4 h-4 text-white" />
+                  Copiar Link de Convite
                 </button>
               </div>
 
-              <ProductsTable
-                products={products}
-                onEdit={(p) => {
-                  setEditingProduct(p);
-                  setIsProductModalOpen(true);
-                }}
-                onDelete={handleDeleteProduct}
-              />
-            </Section>
+              {/* Quick Actions Panel */}
+              <div className="bg-charcoal-900/40 border border-white/5 rounded-2xl p-6">
+                <h3 className="text-sm font-bold uppercase tracking-wider text-charcoal-400 mb-4">Gerenciamento da Planilha</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="p-4 bg-charcoal-900/50 rounded-xl border border-white/5 flex flex-col justify-between gap-4">
+                    <div>
+                      <h4 className="font-bold text-white text-sm mb-1">Exportar para o Google Planilhas</h4>
+                      <p className="text-xs text-charcoal-400">Gere um backup completo dos seus dados diretamente em uma planilha do Google Sheets.</p>
+                    </div>
+                    <button
+                      onClick={handleExportToSheets}
+                      disabled={exporting}
+                      className="w-full py-2.5 bg-charcoal-800 hover:bg-charcoal-700 text-white font-semibold text-xs rounded-lg transition-all flex items-center justify-center gap-2"
+                    >
+                      {exporting ? (
+                        <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />
+                      ) : (
+                        <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
+                      )}
+                      {exporting ? 'Exportando...' : 'Exportar Planilha Agora'}
+                    </button>
+                  </div>
+                  <div className="p-4 bg-charcoal-900/50 rounded-xl border border-white/5 flex flex-col justify-between gap-4">
+                    <div>
+                      <h4 className="font-bold text-red-400 text-sm mb-1">Resetar Todos os Dados</h4>
+                      <p className="text-xs text-charcoal-400">Apague permanentemente todos os participantes, produtos e pagamentos do banco de dados.</p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setConfirmation({
+                          isOpen: true,
+                          title: "Resetar Churrasco",
+                          description: "Tem certeza que deseja apagar TODOS os participantes, itens, pagamentos e grupos deste churrasco? Esta ação é irreversível.",
+                          variant: 'danger',
+                          confirmLabel: 'Sim, resetar',
+                          onConfirm: handleResetSpreadsheet
+                        });
+                      }}
+                      className="w-full py-2.5 bg-red-950/20 hover:bg-red-900/20 text-red-400 border border-red-500/20 font-semibold text-xs rounded-lg transition-all"
+                    >
+                      Resetar Banco de Dados
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
-            <Section
-              title="Participantes"
-              icon={<Users className="w-5 h-5 text-ember-400" />}
-              isExpanded={expandedSections['participants']}
-              onToggle={() => toggleSection('participants')}
-            >
-              <div className="space-y-3">
-                <div className="flex flex-col sm:flex-row gap-2 mb-4">
+          {activeTab === 'items' && (
+            <div className="space-y-6 animate-in fade-in duration-200">
+              <div className="glass-panel p-6 rounded-2xl border border-white/5 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                  <div>
+                    <h3 className="text-lg font-bold text-white">Lista de Compras</h3>
+                    <p className="text-xs text-charcoal-400">Cadastre e edite as carnes, bebidas, acompanhamentos e quem participou do consumo.</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setEditingProduct(undefined);
+                      setIsProductModalOpen(true);
+                    }}
+                    className="py-3 px-5 bg-ember-600 hover:bg-ember-500 text-white rounded-xl transition-all shadow-lg shadow-ember-900/20 font-bold flex items-center justify-center gap-2 active:scale-95 group text-sm self-stretch sm:self-auto"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Adicionar Item/Bebida
+                  </button>
+                </div>
+
+                <div className="border-t border-white/5 pt-4">
+                  <ProductsTable
+                    products={products}
+                    onEdit={(p) => {
+                      setEditingProduct(p);
+                      setIsProductModalOpen(true);
+                    }}
+                    onDelete={handleDeleteProduct}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'participants' && (
+            <div className="space-y-6 animate-in fade-in duration-200">
+              <div className="glass-panel p-6 rounded-2xl border border-white/5 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div>
+                    <h3 className="text-lg font-bold text-white">Participantes & Grupos</h3>
+                    <p className="text-xs text-charcoal-400">Gerencie a galera do churrasco, configure meias-entradas, defina responsáveis pelo pagamento ou crie grupos.</p>
+                  </div>
                   <button
                     onClick={() => setIsManageParticipantsOpen(true)}
-                    className="flex-1 py-2.5 bg-charcoal-800 hover:bg-charcoal-700 text-charcoal-300 hover:text-white rounded-lg transition-colors text-sm font-medium border border-dashed border-charcoal-600 hover:border-white/20 flex items-center justify-center gap-1.5"
+                    className="py-3 px-5 bg-charcoal-800 hover:bg-charcoal-700 text-charcoal-200 hover:text-white rounded-xl transition-colors text-sm font-bold border border-white/10 flex items-center justify-center gap-2 self-stretch sm:self-auto"
                   >
                     <Users className="w-4 h-4 text-ember-400" />
                     Gerenciar Participantes / Grupos
                   </button>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => {
-                        const expanded: Record<string, boolean> = {};
-                        participants.forEach(p => {
-                          expanded[p.name] = true;
-                        });
-                        setExpandedParticipants(expanded);
-                      }}
-                      className="flex-1 sm:flex-none px-3 py-2.5 bg-charcoal-800 hover:bg-charcoal-700 hover:text-white text-charcoal-300 rounded-lg text-xs font-medium border border-white/5 transition-colors whitespace-nowrap"
-                    >
-                      Expandir Todos
-                    </button>
-                    <button
-                      onClick={() => setExpandedParticipants({})}
-                      className="flex-1 sm:flex-none px-3 py-2.5 bg-charcoal-800 hover:bg-charcoal-700 hover:text-white text-charcoal-300 rounded-lg text-xs font-medium border border-white/5 transition-colors whitespace-nowrap"
-                    >
-                      Colapsar Todos
-                    </button>
+                </div>
+
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-t border-white/5 pt-4">
+                  {/* Busca */}
+                  <div className="relative flex-1 max-w-md">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-charcoal-500" />
+                    <input
+                      type="text"
+                      placeholder="Buscar participantes..."
+                      value={participantSearchQuery}
+                      onChange={(e) => setParticipantSearchQuery(e.target.value)}
+                      className="w-full pl-9 pr-8 py-2 bg-charcoal-900/50 border border-white/10 focus:border-ember-500 focus:ring-1 focus:ring-ember-500 rounded-xl text-sm text-white placeholder-charcoal-500 outline-none transition-all"
+                    />
+                    {participantSearchQuery && (
+                      <button
+                        onClick={() => setParticipantSearchQuery('')}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-charcoal-400 hover:text-white text-xs font-bold"
+                      >
+                        Limpar
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Configurações de Exibição e Expansão */}
+                  <div className="flex flex-wrap items-center gap-4">
+                    <label className="flex items-center gap-2 cursor-pointer select-none text-xs text-charcoal-300 hover:text-white transition-colors">
+                      <input
+                        type="checkbox"
+                        checked={showAmounts}
+                        onChange={(e) => setShowAmounts(e.target.checked)}
+                        className="w-4 h-4 rounded border-white/10 bg-charcoal-900/50 text-ember-500 focus:ring-ember-500 focus:ring-offset-charcoal-900 cursor-pointer"
+                      />
+                      Exibir Valores
+                    </label>
+
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => {
+                          const expanded: Record<string, boolean> = {};
+                          participants.forEach(p => {
+                            expanded[p.name] = true;
+                          });
+                          setExpandedParticipants(expanded);
+                        }}
+                        className="px-3 py-2 bg-charcoal-800 hover:bg-charcoal-700 hover:text-white text-charcoal-300 rounded-lg text-xs font-semibold border border-white/5 transition-colors"
+                      >
+                        Expandir Todos
+                      </button>
+                      <button
+                        onClick={() => setExpandedParticipants({})}
+                        className="px-3 py-2 bg-charcoal-800 hover:bg-charcoal-700 hover:text-white text-charcoal-300 rounded-lg text-xs font-semibold border border-white/5 transition-colors"
+                      >
+                        Colapsar Todos
+                      </button>
+                    </div>
                   </div>
                 </div>
-                {participants.map((participant) => (
-                  <ParticipantCard
-                    key={participant.name}
-                    participant={participant}
-                    products={products}
-                    isExpanded={!!expandedParticipants[participant.name]}
-                    onToggle={() => toggleParticipantExpanded(participant.name)}
-                    onEdit={() => {
-                      setEditingParticipant(participant.name);
-                      setIsManageParticipantsOpen(true);
-                    }}
-                  />
-                ))}
+
+                {filteredParticipants.length === 0 ? (
+                  <div className="text-charcoal-500 italic p-8 text-center bg-charcoal-900/20 border border-dashed border-charcoal-800 rounded-xl">
+                    <p>Nenhum participante encontrado.</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                    {filteredParticipants.map((participant, index) => (
+                      <ParticipantCard
+                        key={participant.name}
+                        participant={participant}
+                        products={products}
+                        isExpanded={!!expandedParticipants[participant.name]}
+                        onToggle={() => toggleParticipantExpanded(participant.name)}
+                        onEdit={() => {
+                          setEditingParticipant(participant.name);
+                          setIsManageParticipantsOpen(true);
+                        }}
+                        index={index}
+                        showAmounts={showAmounts}
+                        isDragging={draggedIndex !== null && participants[draggedIndex]?.name === participant.name}
+                        isSearching={!!participantSearchQuery}
+                        onDragStart={handleDragStart}
+                        onDragOver={handleDragOver}
+                        onDragEnd={handleDragEnd}
+                        onTouchStart={handleTouchStart}
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
-            </Section>
-          </div>
+            </div>
+          )}
+
+          {activeTab === 'settlements' && (
+            <div className="space-y-6 animate-in fade-in duration-200">
+              <div className="glass-panel p-6 rounded-2xl border border-white/5 space-y-4">
+                <div>
+                  <h3 className="text-lg font-bold text-white">Acerto de Contas</h3>
+                  <p className="text-xs text-charcoal-400">Veja quem deve para quem, registre pagamentos realizados ou copie o resumo completo para o WhatsApp.</p>
+                </div>
+                <div className="border-t border-white/5 pt-4">
+                  <SettlementMatrix
+                    settlements={settlements}
+                    participants={participants}
+                    payments={payments}
+                    onAddPayment={handleAddPayment}
+                    onDeletePayment={handleDeletePayment}
+                    isSyncing={isSyncing}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Mobile Bottom Navigation Bar */}
+        <div className="fixed bottom-0 left-0 right-0 z-50 md:hidden bg-charcoal-900/95 backdrop-blur-lg border-t border-white/10 flex items-center justify-around py-3 px-2 shadow-[0_-4px_16px_rgba(0,0,0,0.5)]">
+          <button
+            onClick={() => setActiveTab('overview')}
+            className={`flex flex-col items-center gap-1 ${activeTab === 'overview' ? 'text-orange-400' : 'text-charcoal-400'}`}
+          >
+            <Flame className="w-5 h-5" />
+            <span className="text-[10px] font-bold">Resumo</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('items')}
+            className={`flex flex-col items-center gap-1 ${activeTab === 'items' ? 'text-orange-400' : 'text-charcoal-400'}`}
+          >
+            <ShoppingBag className="w-5 h-5" />
+            <span className="text-[10px] font-bold">Itens</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('participants')}
+            className={`flex flex-col items-center gap-1 ${activeTab === 'participants' ? 'text-orange-400' : 'text-charcoal-400'}`}
+          >
+            <Users className="w-5 h-5" />
+            <span className="text-[10px] font-bold">Pessoas</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('settlements')}
+            className={`flex flex-col items-center gap-1 ${activeTab === 'settlements' ? 'text-orange-400' : 'text-charcoal-400'}`}
+          >
+            <DollarSign className="w-5 h-5" />
+            <span className="text-[10px] font-bold">Acertos</span>
+          </button>
         </div>
 
         <ManageParticipantsModal
@@ -1201,56 +1569,11 @@ export const BarbecueManager = () => {
           initialExpandedParticipant={editingParticipant}
         />
       </div>
-    </Layout >
+    </Layout>
+
   );
 }
 
-const Section = ({ title, icon, isExpanded, onToggle, children }: any) => {
-  return (
-    <div className="glass-panel overflow-hidden rounded-2xl border border-white/5">
-      <div
-        className="p-4 flex items-center justify-between bg-charcoal-900/50 backdrop-blur-sm select-none border-b border-white/5 cursor-pointer hover:bg-white/5 transition-colors"
-        onClick={onToggle}
-      >
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 text-white font-semibold text-lg">
-            {icon}
-            {title}
-          </div>
-        </div>
-
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggle();
-          }}
-          className="p-2 hover:bg-white/10 rounded-lg text-charcoal-400"
-        >
-          {isExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
-        </button>
-      </div>
-
-      <AnimatePresence initial={false}>
-        {isExpanded && (
-          <motion.div
-            initial="collapsed"
-            animate="open"
-            exit="collapsed"
-            variants={{
-              open: { opacity: 1, height: "auto" },
-              collapsed: { opacity: 0, height: 0 }
-            }}
-            transition={{ duration: 0.3, ease: [0.04, 0.62, 0.23, 0.98] }}
-          >
-            <div className="p-6">
-              {children}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-};
 
 const ProductsTable = ({ products, onEdit, onDelete }: { products: Product[], onEdit: (p: Product) => void, onDelete: (p: Product) => void }) => {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
@@ -1262,9 +1585,11 @@ const ProductsTable = ({ products, onEdit, onDelete }: { products: Product[], on
     return () => window.removeEventListener('click', handleClickOutside);
   }, []);
 
-  if (products.length === 0) {
+  const cleanProducts = products.filter(p => !p.isPayment && p.name !== 'Pagamento' && !p.id.toString().startsWith('pay-'));
+
+  if (cleanProducts.length === 0) {
     return (
-      <div className="text-charcoal-500 italic p-8 text-center">
+      <div className="text-charcoal-500 italic p-8 text-center bg-charcoal-900/20 border border-dashed border-charcoal-800 rounded-xl">
         <p>Nenhum produto encontrado.</p>
       </div>
     );
@@ -1272,88 +1597,173 @@ const ProductsTable = ({ products, onEdit, onDelete }: { products: Product[], on
 
   return (
     <div className="w-full">
-      <table className="w-full text-left text-sm table-fixed">
-        <thead className="bg-charcoal-900/50 text-charcoal-400">
-          <tr>
-            <th className="p-3 font-medium text-xs uppercase tracking-wider w-[40%] md:w-[30%]">Item</th>
-            <th className="p-3 font-medium text-xs uppercase tracking-wider w-[25%] md:w-[15%]">Valor</th>
-            <th className="p-3 font-medium hidden md:table-cell text-xs uppercase tracking-wider md:w-[20%]">Quem Pagou</th>
-            <th className="p-3 font-medium text-xs uppercase tracking-wider w-[25%] md:w-[30%]">Consumidores</th>
-            <th className="p-3 w-[10%] md:w-[5%]"></th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-white/5">
-          {products.filter(p => !p.isPayment && p.name !== 'Pagamento' && !p.id.toString().startsWith('pay-')).map((p: any) => (
-            <tr key={p.id} className="hover:bg-white/5 transition-colors group relative">
-              <td className="p-3 font-medium text-white truncate pr-2" title={p.name}>
-                {p.name}
-              </td>
-              <td className="p-3 text-charcoal-300 whitespace-nowrap">R$ {p.price.toFixed(2)}</td>
-              <td className="p-3 text-charcoal-400 hidden md:table-cell truncate">
-                <span className="px-2 py-1 bg-charcoal-800 rounded text-xs">{p.payer}</span>
-              </td>
-              <td className="p-3 text-charcoal-400">
-                <div className="flex flex-wrap gap-1">
-                  {/* Show first 3 avatars on mobile, 5 on desktop */}
-                  {p.consumers.slice(0, 5).map((c: string, i: number) => (
-                    <div key={i} className="w-5 h-5 md:w-6 md:h-6 rounded-full bg-charcoal-700 flex items-center justify-center text-[8px] md:text-[10px] border border-charcoal-800 shrink-0 select-none" title={c}>
-                      {c.charAt(0)}
-                    </div>
-                  ))}
-                  {p.consumers.length > 5 && (
-                    <div className="w-5 h-5 md:w-6 md:h-6 rounded-full bg-charcoal-800 flex items-center justify-center text-[8px] md:text-[10px] border border-charcoal-800 shrink-0">
-                      +{p.consumers.length - 5}
-                    </div>
-                  )}
-                </div>
-              </td>
-              <td className="p-3 text-right relative">
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setOpenMenuId(openMenuId === p.id ? null : p.id);
-                  }}
-                  className="p-1.5 hover:bg-white/10 rounded-lg text-charcoal-400 transition-colors"
-                >
-                  <MoreVertical className="w-5 h-5" />
-                </button>
-
-                <AnimatePresence>
-                  {openMenuId === p.id && (
-                    <motion.div
-                      initial={{ opacity: 0, scale: 0.95, y: 10 }}
-                      animate={{ opacity: 1, scale: 1, y: 0 }}
-                      exit={{ opacity: 0, scale: 0.95 }}
-                      className="absolute right-8 top-8 z-50 w-32 bg-charcoal-800 border border-charcoal-600 rounded-xl shadow-2xl overflow-hidden"
-                    >
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onEdit(p);
-                          setOpenMenuId(null);
-                        }}
-                        className="w-full px-4 py-2 text-left text-sm text-charcoal-200 hover:bg-white/5 flex items-center gap-2"
-                      >
-                        <Edit className="w-4 h-4" /> Editar
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onDelete(p);
-                          setOpenMenuId(null);
-                        }}
-                        className="w-full px-4 py-2 text-left text-sm text-red-400 hover:bg-red-500/10 flex items-center gap-2"
-                      >
-                        <Trash2 className="w-4 h-4" /> Excluir
-                      </button>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </td>
+      {/* Desktop Table View */}
+      <div className="hidden md:block overflow-x-auto">
+        <table className="w-full text-left text-sm table-fixed">
+          <thead className="bg-charcoal-900/50 text-charcoal-400">
+            <tr>
+              <th className="p-3 font-medium text-xs uppercase tracking-wider w-[40%] md:w-[30%]">Item</th>
+              <th className="p-3 font-medium text-xs uppercase tracking-wider w-[25%] md:w-[15%]">Valor</th>
+              <th className="p-3 font-medium hidden md:table-cell text-xs uppercase tracking-wider md:w-[20%]">Quem Pagou</th>
+              <th className="p-3 font-medium text-xs uppercase tracking-wider w-[25%] md:w-[30%]">Consumidores</th>
+              <th className="p-3 w-[10%] md:w-[5%]"></th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody className="divide-y divide-white/5">
+            {cleanProducts.map((p: any) => (
+              <tr key={p.id} className="hover:bg-white/5 transition-colors group relative">
+                <td className="p-3 font-medium text-white truncate pr-2" title={p.name}>
+                  {p.name}
+                </td>
+                <td className="p-3 text-charcoal-300 whitespace-nowrap">R$ {p.price.toFixed(2)}</td>
+                <td className="p-3 text-charcoal-400 hidden md:table-cell truncate">
+                  <span className="px-2 py-1 bg-charcoal-800 rounded text-xs">{p.payer}</span>
+                </td>
+                <td className="p-3 text-charcoal-400">
+                  <div className="flex flex-wrap gap-1">
+                    {p.consumers.slice(0, 5).map((c: string, i: number) => (
+                      <div key={i} className="w-6 h-6 rounded-full bg-charcoal-700 flex items-center justify-center text-[10px] border border-charcoal-800 shrink-0 select-none" title={c}>
+                        {c.charAt(0).toUpperCase()}
+                      </div>
+                    ))}
+                    {p.consumers.length > 5 && (
+                      <div className="w-6 h-6 rounded-full bg-charcoal-800 flex items-center justify-center text-[10px] border border-charcoal-800 shrink-0">
+                        +{p.consumers.length - 5}
+                      </div>
+                    )}
+                  </div>
+                </td>
+                <td className="p-3 text-right relative">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setOpenMenuId(openMenuId === p.id ? null : p.id);
+                    }}
+                    className="p-1.5 hover:bg-white/10 rounded-lg text-charcoal-400 transition-colors"
+                  >
+                    <MoreVertical className="w-5 h-5" />
+                  </button>
+
+                  <AnimatePresence>
+                    {openMenuId === p.id && (
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.95 }}
+                        className="absolute right-8 top-8 z-50 w-32 bg-charcoal-800 border border-charcoal-600 rounded-xl shadow-2xl overflow-hidden"
+                      >
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onEdit(p);
+                            setOpenMenuId(null);
+                          }}
+                          className="w-full px-4 py-2 text-left text-sm text-charcoal-200 hover:bg-white/5 flex items-center gap-2"
+                        >
+                          <Edit className="w-4 h-4" /> Editar
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onDelete(p);
+                            setOpenMenuId(null);
+                          }}
+                          className="w-full px-4 py-2 text-left text-sm text-red-400 hover:bg-red-500/10 flex items-center gap-2"
+                        >
+                          <Trash2 className="w-4 h-4" /> Excluir
+                        </button>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Mobile Card View */}
+      <div className="md:hidden space-y-3">
+        {cleanProducts.map((p: any) => (
+          <div key={p.id} className="bg-charcoal-900/40 border border-white/5 rounded-xl p-4 flex flex-col gap-3 relative group">
+            {/* Top Info */}
+            <div className="flex justify-between items-start pr-8">
+              <div className="min-w-0">
+                <h4 className="font-bold text-white text-base truncate">{p.name}</h4>
+                <div className="mt-1 flex flex-wrap gap-1.5 items-center">
+                  <span className="text-xs font-semibold text-charcoal-500">Quem pagou:</span>
+                  <span className="px-2 py-0.5 bg-charcoal-800 border border-white/5 rounded-md text-[10px] font-bold text-orange-400">{p.payer}</span>
+                </div>
+              </div>
+              <div className="text-right shrink-0">
+                <span className="font-mono font-bold text-base text-white">R$ {p.price.toFixed(2)}</span>
+              </div>
+            </div>
+
+            {/* Consumers list */}
+            <div className="border-t border-white/5 pt-3 mt-1">
+              <p className="text-[10px] uppercase font-bold tracking-wider text-charcoal-500 mb-1.5">Consumido por ({p.consumers.length}):</p>
+              <div className="flex flex-wrap gap-1">
+                {p.consumers.slice(0, 8).map((c: string, idx: number) => (
+                  <div key={idx} className="w-5 h-5 rounded-full bg-charcoal-800 border border-white/5 flex items-center justify-center text-[9px] font-semibold text-charcoal-300" title={c}>
+                    {c.charAt(0).toUpperCase()}
+                  </div>
+                ))}
+                {p.consumers.length > 8 && (
+                  <div className="w-5 h-5 rounded-full bg-charcoal-750 border border-white/5 flex items-center justify-center text-[9px] font-bold text-ember-400">
+                    +{p.consumers.length - 8}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Quick Actions (absolute top-right) */}
+            <div className="absolute top-3 right-3">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setOpenMenuId(openMenuId === p.id ? null : p.id);
+                }}
+                className="p-1.5 hover:bg-white/10 rounded-lg text-charcoal-400 transition-colors"
+              >
+                <MoreVertical className="w-4 h-4" />
+              </button>
+
+              <AnimatePresence>
+                {openMenuId === p.id && (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    className="absolute right-0 top-8 z-50 w-32 bg-charcoal-800 border border-charcoal-600 rounded-xl shadow-2xl overflow-hidden"
+                  >
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onEdit(p);
+                        setOpenMenuId(null);
+                      }}
+                      className="w-full px-4 py-2.5 text-left text-sm text-charcoal-200 hover:bg-white/5 flex items-center gap-2"
+                    >
+                      <Edit className="w-4 h-4" /> Editar
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDelete(p);
+                        setOpenMenuId(null);
+                      }}
+                      className="w-full px-4 py-2.5 text-left text-sm text-red-400 hover:bg-red-500/10 flex items-center gap-2"
+                    >
+                      <Trash2 className="w-4 h-4 animate-pulse" /> Excluir
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 };

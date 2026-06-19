@@ -5,6 +5,7 @@ export interface Product {
     payer: string; // Name of who paid
     consumers: string[]; // List of names
     isPayment?: boolean; // Marker for payment records masquerading as products
+    linkedGroupName?: string; // Name of the group this product is linked to
 }
 
 export interface Participant {
@@ -36,8 +37,11 @@ export interface PaymentRecord {
 }
 
 export interface Group {
+    id?: string; // Unique ID for matching during edit/rename
     name: string;
     members: string[]; // List of participant names
+    isHalf?: boolean; // If true, all members in this group pay half
+    preferredRecipient?: string; // Preferred recipient for payments of members of this group
 }
 
 export interface SheetData {

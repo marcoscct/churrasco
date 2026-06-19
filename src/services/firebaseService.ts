@@ -161,6 +161,10 @@ export function subscribeToBarbecue(id: string, callback: (data: SheetData) => v
         // Build participant map
         const participantMap = new Map<string, Participant>();
         participants.forEach(p => {
+            const pGroups = groups.filter(g => g.members?.includes(p.name));
+            const groupIsHalf = pGroups.some(g => g.isHalf);
+            const groupPreferredRecipient = pGroups.find(g => g.preferredRecipient)?.preferredRecipient;
+
             participantMap.set(p.name, {
                 name: p.name,
                 totalPaid: 0,
@@ -168,8 +172,8 @@ export function subscribeToBarbecue(id: string, callback: (data: SheetData) => v
                 netBalance: 0,
                 pix: p.pix,
                 paymentResponsible: p.paymentResponsible,
-                preferredRecipient: p.preferredRecipient,
-                isHalf: p.isHalf
+                preferredRecipient: p.preferredRecipient || groupPreferredRecipient,
+                isHalf: p.isHalf || groupIsHalf
             });
         });
         
@@ -221,6 +225,10 @@ export async function getBarbecueData(id: string): Promise<SheetData> {
 
     const participantMap = new Map<string, Participant>();
     participants.forEach(p => {
+        const pGroups = groups.filter(g => g.members?.includes(p.name));
+        const groupIsHalf = pGroups.some(g => g.isHalf);
+        const groupPreferredRecipient = pGroups.find(g => g.preferredRecipient)?.preferredRecipient;
+
         participantMap.set(p.name, {
             name: p.name,
             totalPaid: 0,
@@ -228,8 +236,8 @@ export async function getBarbecueData(id: string): Promise<SheetData> {
             netBalance: 0,
             pix: p.pix,
             paymentResponsible: p.paymentResponsible,
-            preferredRecipient: p.preferredRecipient,
-            isHalf: p.isHalf
+            preferredRecipient: p.preferredRecipient || groupPreferredRecipient,
+            isHalf: p.isHalf || groupIsHalf
         });
     });
 
@@ -275,7 +283,8 @@ export async function addProductToBarbecue(
         price: productData.price,
         payer: productData.payer,
         id: 'prod_' + Math.random().toString(36).substring(2, 9),
-        consumers
+        consumers,
+        linkedGroupName: productData.linkedGroupName
     };
     
     const data = docSnap.data();
@@ -459,4 +468,12 @@ export async function resetBarbecueData(id: string): Promise<void> {
 export async function saveGroupsToBarbecue(id: string, groups: Group[]): Promise<void> {
     const docRef = doc(db, 'barbecues', id);
     await updateDoc(docRef, { groups });
+}
+
+/**
+ * Updates the complete list of participants (useful for reordering).
+ */
+export async function saveParticipantsOrderInBarbecue(id: string, participants: Participant[]): Promise<void> {
+    const docRef = doc(db, 'barbecues', id);
+    await updateDoc(docRef, { participants });
 }

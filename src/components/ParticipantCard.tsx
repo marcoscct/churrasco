@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import type { Participant, Product } from '../types';
-import { ArrowDownLeft, ArrowUpRight, Edit2, ChevronDown, ChevronUp } from 'lucide-react';
+import { ArrowDownLeft, ArrowUpRight, Edit2, ChevronDown, ChevronUp, Copy, GripVertical } from 'lucide-react';
 import { clsx } from 'clsx';
 import { formatCurrency } from '../utils/format';
+import { useToast } from '../contexts/ToastContext';
+
 
 interface ParticipantCardProps {
     participant: Participant;
@@ -10,10 +12,34 @@ interface ParticipantCardProps {
     onEdit: () => void;
     isExpanded?: boolean;
     onToggle?: () => void;
+    // Props para reordenação (arrastar e soltar)
+    index: number;
+    showAmounts?: boolean;
+    isDragging?: boolean;
+    isSearching?: boolean;
+    onDragStart?: (index: number) => void;
+    onDragOver?: (e: React.DragEvent, index: number) => void;
+    onDragEnd?: () => void;
+    onTouchStart?: (index: number) => void;
 }
 
-export function ParticipantCard({ participant, products, onEdit, isExpanded: isExpandedProp, onToggle }: ParticipantCardProps) {
+export function ParticipantCard({ 
+    participant, 
+    products, 
+    onEdit, 
+    isExpanded: isExpandedProp, 
+    onToggle,
+    index,
+    showAmounts = true,
+    isDragging = false,
+    isSearching = false,
+    onDragStart,
+    onDragOver,
+    onDragEnd,
+    onTouchStart
+}: ParticipantCardProps) {
     const [isExpandedLocal, setIsExpandedLocal] = useState(false);
+    const { showToast } = useToast();
     const isExpanded = isExpandedProp !== undefined ? isExpandedProp : isExpandedLocal;
     const toggleExpand = onToggle || (() => setIsExpandedLocal(!isExpandedLocal));
     const isReceiver = participant.netBalance > 0.01;
@@ -28,13 +54,29 @@ export function ParticipantCard({ participant, products, onEdit, isExpanded: isE
     if (isPayer) balanceLabel = "Saldo Devedor";
 
     const displayPaid = isDependent ? participant.totalConsumed : participant.totalPaid;
+    const [dragEnabled, setDragEnabled] = useState(false);
 
     return (
         <div 
             onClick={toggleExpand}
+            draggable={!isSearching && dragEnabled}
+            onDragStart={(e) => {
+                e.dataTransfer.setData('text/plain', index.toString());
+                e.dataTransfer.effectAllowed = 'move';
+                onDragStart?.(index);
+            }}
+            onDragOver={(e) => onDragOver?.(e, index)}
+            onDragEnd={() => {
+                onDragEnd?.();
+                setDragEnabled(false);
+            }}
+            data-participant-index={index}
             className={clsx(
-                "glass-panel p-4 rounded-xl border-l-4 transition-all relative group cursor-pointer select-none",
-                isSettled ? "border-l-charcoal-500 hover:bg-white/5" : isReceiver ? "border-l-green-500 hover:bg-green-500/[0.02]" : "border-l-red-500 hover:bg-red-500/[0.02]"
+                "glass-panel p-4 rounded-xl border-l-4 transition-all relative group select-none",
+                isDragging 
+                    ? "opacity-30 border-dashed border-2 border-ember-500 scale-95 pointer-events-none" 
+                    : (isSettled ? "border-l-charcoal-500 hover:bg-white/5" : isReceiver ? "border-l-green-500 hover:bg-green-500/[0.02]" : "border-l-red-500 hover:bg-red-500/[0.02]"),
+                !isSearching && "cursor-pointer"
             )}
         >
             <div className="absolute top-3.5 right-12 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -53,6 +95,32 @@ export function ParticipantCard({ participant, products, onEdit, isExpanded: isE
             {/* Collapsed Header View */}
             <div className="flex justify-between items-center pr-6">
                 <div className="flex items-center gap-3 min-w-0">
+                    {!isSearching && (
+                        <div
+                            onClick={(e) => e.stopPropagation()}
+                            onMouseDown={(e) => {
+                                e.stopPropagation();
+                                setDragEnabled(true);
+                            }}
+                            onMouseUp={(e) => {
+                                e.stopPropagation();
+                                setDragEnabled(false);
+                            }}
+                            onTouchStart={(e) => {
+                                e.stopPropagation();
+                                setDragEnabled(true);
+                                onTouchStart?.(index);
+                            }}
+                            onTouchEnd={(e) => {
+                                e.stopPropagation();
+                                setDragEnabled(false);
+                            }}
+                            className="cursor-grab active:cursor-grabbing p-1.5 -ml-2 text-charcoal-500 hover:text-white rounded hover:bg-white/5 transition-colors shrink-0 flex items-center justify-center"
+                            title="Arrastar para reordenar"
+                        >
+                            <GripVertical className="w-4 h-4" />
+                        </div>
+                    )}
                     <div className="w-8 h-8 rounded-full bg-gradient-to-br from-ember-500 to-orange-600 flex items-center justify-center text-white font-bold text-xs shadow-lg shadow-ember-900/20 shrink-0">
                         {participant.name.charAt(0)}
                     </div>
@@ -72,17 +140,19 @@ export function ParticipantCard({ participant, products, onEdit, isExpanded: isE
                 </div>
 
                 <div className="flex items-center gap-3 shrink-0">
-                    <span className={clsx(
-                        "text-sm font-bold",
-                        isSettled ? "text-charcoal-500" : isReceiver ? "text-green-400" : "text-red-400"
-                    )}>
-                        {isDependent && isSettled
-                            ? <span className="text-xs font-normal text-charcoal-500 italic">Zerado no Responsável</span>
-                            : <>
-                                {isReceiver ? "+" : isPayer ? "-" : ""} {formatCurrency(participant.netBalance).replace('- ', '').replace('+', '')}
-                            </>
-                        }
-                    </span>
+                    {showAmounts && (
+                        <span className={clsx(
+                            "text-sm font-bold",
+                            isSettled ? "text-charcoal-500" : isReceiver ? "text-green-400" : "text-red-400"
+                        )}>
+                            {isDependent && isSettled
+                                ? <span className="text-xs font-normal text-charcoal-500 italic">Zerado no Responsável</span>
+                                : <>
+                                    {isReceiver ? "+" : isPayer ? "-" : ""} {formatCurrency(participant.netBalance).replace('- ', '').replace('+', '')}
+                                </>
+                            }
+                        </span>
+                    )}
                     <div className="text-charcoal-500">
                         {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                     </div>
@@ -93,9 +163,22 @@ export function ParticipantCard({ participant, products, onEdit, isExpanded: isE
             {isExpanded && (
                 <div className="mt-4 pt-4 border-t border-white/5 space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
                     {participant.pix && (
-                        <div className="flex items-center gap-1.5 text-xs text-charcoal-400">
-                            <span className="uppercase bg-charcoal-800 px-1.5 py-0.5 rounded text-[10px] font-bold text-charcoal-300">{participant.pix.type}</span>
-                            <span className="font-mono">{participant.pix.key}</span>
+                        <div className="flex items-center justify-between bg-charcoal-900/50 p-2.5 rounded-lg border border-white/5">
+                            <div className="flex items-center gap-2 text-xs text-charcoal-400 min-w-0">
+                                <span className="uppercase bg-charcoal-800 px-1.5 py-0.5 rounded text-[10px] font-bold text-charcoal-300 shrink-0">{participant.pix.type}</span>
+                                <span className="font-mono truncate select-all">{participant.pix.key}</span>
+                            </div>
+                            <button
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    navigator.clipboard.writeText(participant.pix?.key || "");
+                                    showToast(`Chave PIX (${participant.pix?.type}) copiada!`, "success");
+                                }}
+                                className="p-1 hover:bg-white/10 rounded text-charcoal-400 hover:text-white transition-all active:scale-90"
+                                title="Copiar Chave PIX"
+                            >
+                                <Copy className="w-3.5 h-3.5" />
+                            </button>
                         </div>
                     )}
 
@@ -131,7 +214,7 @@ export function ParticipantCard({ participant, products, onEdit, isExpanded: isE
 
                     <div className="pt-2 flex justify-between items-center text-xs text-charcoal-500 border-t border-white/5">
                         <span>{balanceLabel}</span>
-                        {!isSettled && (
+                        {!isSettled && showAmounts && (
                             <span className={clsx(
                                 "flex items-center gap-0.5 font-bold text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-full",
                                 isReceiver ? "bg-green-500/10 text-green-400" : "bg-red-500/10 text-red-400"

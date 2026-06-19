@@ -5,14 +5,21 @@ import './index.css'
 import App from './App.tsx'
 import { GoogleOAuthProvider } from '@react-oauth/google'
 import { AuthProvider } from './contexts/AuthContext'
+import { ToastProvider } from './contexts/ToastContext'
+import { DialogProvider } from './contexts/DialogContext'
 import { GOOGLE_CLIENT_ID } from './config/auth'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
       <AuthProvider>
-        <App />
+        <ToastProvider>
+          <DialogProvider>
+            <App />
+          </DialogProvider>
+        </ToastProvider>
       </AuthProvider>
     </GoogleOAuthProvider>
   </StrictMode>,
 )
+

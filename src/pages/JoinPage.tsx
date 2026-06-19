@@ -4,10 +4,12 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { getBarbecueData } from '../services/firebaseService';
 import type { Participant } from '../types';
 import { UserPlus, ArrowRight, Loader2 } from 'lucide-react';
+import { useDialog } from '../contexts/DialogContext';
 
 export function JoinPage() {
     const { id } = useParams<{ id: string }>();
     const navigate = useNavigate();
+    const dialog = useDialog();
     const [loading, setLoading] = useState(true);
     const [participants, setParticipants] = useState<Participant[]>([]);
     const [newUserName, setNewUserName] = useState('');
@@ -37,7 +39,7 @@ export function JoinPage() {
                 }
             } catch (err) {
                 console.error("Failed to load participants", err);
-                alert("Erro ao carregar lista de participantes.");
+                dialog.alert("Erro", "Erro ao carregar lista de participantes.");
             } finally {
                 setLoading(false);
             }

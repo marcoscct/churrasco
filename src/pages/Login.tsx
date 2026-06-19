@@ -5,16 +5,28 @@ import { Flame } from 'lucide-react';
 
 import { useNavigate } from 'react-router-dom';
 import { useEffect } from 'react';
+import { useDialog } from '../contexts/DialogContext';
 
 export const Login: React.FC = () => {
     const { login, token } = useAuth();
     const navigate = useNavigate();
+    const dialog = useDialog();
 
     useEffect(() => {
         if (token) {
             navigate('/dashboard');
         }
     }, [token, navigate]);
+
+    useEffect(() => {
+        if (sessionStorage.getItem('session_expired_flag') === 'true') {
+            sessionStorage.removeItem('session_expired_flag');
+            dialog.alert(
+                "Sessão Expirada",
+                "Sua sessão expirou por segurança. Por favor, faça login novamente para continuar."
+            );
+        }
+    }, [dialog]);
 
     return (
         <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">

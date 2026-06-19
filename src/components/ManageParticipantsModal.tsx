@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
-import { X, Save, Users, ChevronDown, ChevronUp, Plus, Trash2, AlertCircle, Check } from 'lucide-react';
+import { X, Save, Users, ChevronDown, ChevronUp, Plus, Trash2, AlertCircle, Check, Edit } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { clsx } from 'clsx';
 import type { Participant, Product, Group } from '../types';
+import { useDialog } from '../contexts/DialogContext';
 
 interface ManageParticipantsModalProps {
     isOpen: boolean;
@@ -25,7 +26,9 @@ export function ManageParticipantsModal({ isOpen, onClose, participants, product
     if (!isOpen) return null;
 
     const [modalTab, setModalTab] = useState<'participants' | 'groups'>('participants');
+    const [editingGroup, setEditingGroup] = useState<Group | null>(null);
     const allParticipants = participants;
+    const dialog = useDialog();
 
     const [confirmation, setConfirmation] = useState<ConfirmationState>({
         isOpen: false,
@@ -80,53 +83,119 @@ export function ManageParticipantsModal({ isOpen, onClose, participants, product
 
                 <div className="p-6 overflow-y-auto custom-scrollbar flex-1">
                     {modalTab === 'groups' ? (
-                        <div className="space-y-6">
-                            {/* Group List */}
-                            <div className="space-y-3 max-h-[40vh] overflow-y-auto pr-2 custom-scrollbar">
-                                {groups.length === 0 ? (
-                                    <p className="text-sm text-charcoal-500 italic text-center py-6">Nenhum grupo criado ainda.</p>
-                                ) : (
-                                    groups.map(g => (
-                                        <div key={g.name} className="bg-charcoal-800/40 p-4 rounded-xl border border-white/5 flex flex-col gap-2">
-                                            <div className="flex justify-between items-center">
-                                                <h3 className="font-semibold text-white">{g.name}</h3>
-                                                <button
-                                                    onClick={() => {
-                                                        const updated = groups.filter(group => group.name !== g.name);
-                                                        onSaveGroups(updated);
-                                                    }}
-                                                    className="p-1 hover:bg-white/10 rounded text-red-500 transition-colors"
-                                                    title="Excluir Grupo"
-                                                >
-                                                    <Trash2 className="w-4 h-4" />
-                                                </button>
-                                            </div>
-                                            <p className="text-xs text-charcoal-400">
-                                                {g.members.length === 0
-                                                    ? 'Sem participantes neste grupo'
-                                                    : g.members.join(', ')
-                                                }
-                                            </p>
-                                        </div>
-                                    ))
-                                )}
-                            </div>
-
-                            {/* Create Group Form */}
-                            <div className="pt-4 border-t border-white/5">
-                                <p className="text-sm font-medium text-charcoal-400 mb-3">Criar Novo Grupo</p>
-                                <NewGroupForm
+                        editingGroup ? (
+                            <div className="space-y-4">
+                                <div className="flex justify-between items-center pb-2 border-b border-white/5">
+                                    <h3 className="text-sm font-bold text-white uppercase tracking-wider">Editar Grupo: {editingGroup.name}</h3>
+                                    <button
+                                        onClick={() => setEditingGroup(null)}
+                                        className="text-xs text-charcoal-400 hover:text-white"
+                                    >
+                                        Voltar
+                                    </button>
+                                </div>
+                                <GroupEditForm
+                                    group={editingGroup}
                                     participants={participants}
-                                    onAdd={(newGroup) => {
-                                        if (groups.some(g => g.name.toLowerCase() === newGroup.name.toLowerCase())) {
-                                            alert("Já existe um grupo com este nome.");
+                                    onSave={(updatedGroup) => {
+                                        const otherGroups = groups.filter(g => g.id !== editingGroup.id && g.name !== editingGroup.name);
+                                        if (otherGroups.some(g => g.name.toLowerCase() === updatedGroup.name.toLowerCase())) {
+                                            dialog.alert("Erro de Nome", "Já existe outro grupo com este nome.");
                                             return;
                                         }
-                                        onSaveGroups([...groups, newGroup]);
+                                        const updated = groups.map(g => {
+                                            if ((editingGroup.id && g.id === editingGroup.id) || g.name === editingGroup.name) {
+                                                return {
+                                                    ...g,
+                                                    ...updatedGroup,
+                                                    id: g.id || `group_${Math.random().toString(36).substring(2, 9)}`
+                                                };
+                                            }
+                                            return g;
+                                        });
+                                        onSaveGroups(updated);
+                                        setEditingGroup(null);
                                     }}
+                                    onCancel={() => setEditingGroup(null)}
                                 />
                             </div>
-                        </div>
+                        ) : (
+                            <div className="space-y-6">
+                                {/* Group List */}
+                                <div className="space-y-3 max-h-[40vh] overflow-y-auto pr-2 custom-scrollbar">
+                                    {groups.length === 0 ? (
+                                        <p className="text-sm text-charcoal-500 italic text-center py-6">Nenhum grupo criado ainda.</p>
+                                    ) : (
+                                        groups.map(g => (
+                                            <div key={g.name} className="bg-charcoal-800/40 p-4 rounded-xl border border-white/5 flex flex-col gap-2">
+                                                <div className="flex justify-between items-center">
+                                                    <h3 className="font-semibold text-white flex items-center gap-1.5 flex-wrap">
+                                                        <span>{g.name}</span>
+                                                        {g.isHalf && (
+                                                            <span className="text-[9px] bg-ember-500/20 text-ember-400 px-1.5 py-0.5 rounded font-mono font-bold uppercase tracking-wider scale-90">Meia</span>
+                                                        )}
+                                                        {g.preferredRecipient && (
+                                                            <span className="text-[9px] bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded font-mono font-bold uppercase tracking-wider scale-90">Priorizado</span>
+                                                        )}
+                                                    </h3>
+                                                    <div className="flex gap-1">
+                                                        <button
+                                                            onClick={() => setEditingGroup(g)}
+                                                            className="p-1 hover:bg-white/10 rounded text-charcoal-400 hover:text-white transition-colors"
+                                                            title="Editar Grupo"
+                                                        >
+                                                            <Edit className="w-4 h-4" />
+                                                        </button>
+                                                        <button
+                                                            onClick={async () => {
+                                                                const confirmed = await dialog.confirm(
+                                                                    "Excluir Grupo",
+                                                                    `Tem certeza de que deseja excluir o grupo "${g.name}"? Isso não removerá os participantes do churrasco, mas desvinculará este grupo de qualquer item.`,
+                                                                    "danger"
+                                                                );
+                                                                if (confirmed) {
+                                                                    const updated = groups.filter(group => group.name !== g.name);
+                                                                    onSaveGroups(updated);
+                                                                }
+                                                            }}
+                                                            className="p-1 hover:bg-white/10 rounded text-red-500 transition-colors"
+                                                            title="Excluir Grupo"
+                                                        >
+                                                            <Trash2 className="w-4 h-4" />
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                                <p className="text-xs text-charcoal-400">
+                                                    {g.members.length === 0
+                                                        ? 'Sem participantes neste grupo'
+                                                        : g.members.join(', ')
+                                                    }
+                                                </p>
+                                            </div>
+                                        ))
+                                    )}
+                                </div>
+
+                                {/* Create Group Form */}
+                                <div className="pt-4 border-t border-white/5">
+                                    <p className="text-sm font-medium text-charcoal-400 mb-3">Criar Novo Grupo</p>
+                                    <NewGroupForm
+                                        participants={participants}
+                                        onAdd={(newGroup) => {
+                                            if (groups.some(g => g.name.toLowerCase() === newGroup.name.toLowerCase())) {
+                                                dialog.alert("Erro de Nome", "Já existe um grupo com este nome.");
+                                                return;
+                                            }
+                                            const groupWithId = {
+                                                ...newGroup,
+                                                id: `group_${Math.random().toString(36).substring(2, 9)}`
+                                            };
+                                            onSaveGroups([...groups, groupWithId]);
+                                        }}
+                                    />
+                                </div>
+                            </div>
+                        )
                     ) : (
                         <div className="space-y-4">
                             {participants.map((p) => (
@@ -541,6 +610,8 @@ function NewParticipantForm({ onAdd }: { onAdd: (name: string) => void }) {
 function NewGroupForm({ participants, onAdd }: { participants: Participant[], onAdd: (g: Group) => void }) {
     const [name, setName] = useState('');
     const [selectedMembers, setSelectedMembers] = useState<string[]>([]);
+    const [isHalf, setIsHalf] = useState(false);
+    const [preferredRecipient, setPreferredRecipient] = useState('');
 
     const toggleMember = (mName: string) => {
         setSelectedMembers(prev => 
@@ -554,10 +625,14 @@ function NewGroupForm({ participants, onAdd }: { participants: Participant[], on
         if (!name.trim()) return;
         onAdd({
             name: name.trim(),
-            members: selectedMembers
+            members: selectedMembers,
+            isHalf: isHalf || undefined,
+            preferredRecipient: preferredRecipient || undefined
         });
         setName('');
         setSelectedMembers([]);
+        setIsHalf(false);
+        setPreferredRecipient('');
     };
 
     return (
@@ -612,6 +687,157 @@ function NewGroupForm({ participants, onAdd }: { participants: Participant[], on
                         );
                     })}
                 </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4 pt-2">
+                <div className="flex items-center gap-2 bg-charcoal-950/40 p-3 rounded-lg border border-white/5">
+                    <button
+                        type="button"
+                        onClick={() => setIsHalf(!isHalf)}
+                        className={clsx(
+                            "w-4 h-4 rounded border flex items-center justify-center transition-colors shrink-0",
+                            isHalf ? "bg-ember-500 border-ember-500" : "border-charcoal-500"
+                        )}
+                    >
+                        {isHalf && <Check className="w-3 h-3 text-white" />}
+                    </button>
+                    <div>
+                        <p className="text-xs font-bold text-white">Grupo Paga Meia</p>
+                        <p className="text-[10px] text-charcoal-500 leading-tight">Peso 0.5 na divisão</p>
+                    </div>
+                </div>
+
+                <div>
+                    <label className="block text-xxs font-semibold text-charcoal-400 mb-1 uppercase tracking-wider">Priorizar pagamento para</label>
+                    <select
+                        value={preferredRecipient}
+                        onChange={(e) => setPreferredRecipient(e.target.value)}
+                        className="w-full bg-charcoal-950 border border-charcoal-700 rounded-lg px-2.5 py-2 text-xs text-white focus:outline-none focus:border-ember-500 transition-all appearance-none"
+                    >
+                        <option value="">Ninguém (Distribuição normal)</option>
+                        {participants.map(p => (
+                            <option key={p.name} value={p.name}>{p.name}</option>
+                        ))}
+                    </select>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function GroupEditForm({ group, participants, onSave, onCancel }: { group: Group, participants: Participant[], onSave: (g: Omit<Group, 'id'>) => void, onCancel: () => void }) {
+    const [name, setName] = useState(group.name);
+    const [selectedMembers, setSelectedMembers] = useState<string[]>(group.members || []);
+    const [isHalf, setIsHalf] = useState(!!group.isHalf);
+    const [preferredRecipient, setPreferredRecipient] = useState(group.preferredRecipient || '');
+
+    const toggleMember = (mName: string) => {
+        setSelectedMembers(prev => 
+            prev.includes(mName)
+                ? prev.filter(n => n !== mName)
+                : [...prev, mName]
+        );
+    };
+
+    const handleSave = () => {
+        if (!name.trim()) return;
+        onSave({
+            name: name.trim(),
+            members: selectedMembers,
+            isHalf: isHalf || undefined,
+            preferredRecipient: preferredRecipient || undefined
+        });
+    };
+
+    return (
+        <div className="space-y-4">
+            <div>
+                <label className="block text-xs font-semibold text-charcoal-400 mb-1 uppercase tracking-wider">Nome do Grupo</label>
+                <input
+                    type="text"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    className="w-full bg-charcoal-950 border border-charcoal-700 rounded-lg px-3 py-2 text-sm text-white focus:border-ember-500 outline-none"
+                />
+            </div>
+
+            <div className="space-y-2">
+                <p className="text-xs font-bold text-charcoal-500 uppercase tracking-wider">Membros do Grupo</p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-32 overflow-y-auto pr-2 custom-scrollbar">
+                    {participants.map(p => {
+                        const isChecked = selectedMembers.includes(p.name);
+                        return (
+                            <button
+                                key={p.name}
+                                type="button"
+                                onClick={() => toggleMember(p.name)}
+                                className={clsx(
+                                    "flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs transition-all border",
+                                    isChecked
+                                        ? "bg-ember-500/10 border-ember-500/50 text-white"
+                                        : "bg-charcoal-850 border-transparent text-charcoal-400 hover:bg-charcoal-800"
+                                )}
+                            >
+                                <div className={clsx(
+                                    "w-3 h-3 rounded border flex items-center justify-center transition-colors",
+                                    isChecked ? "bg-ember-500 border-ember-500" : "border-charcoal-500"
+                                )}>
+                                    {isChecked && <Check className="w-2.5 h-2.5 text-white" />}
+                                </div>
+                                <span className="truncate">{p.name}</span>
+                            </button>
+                        );
+                    })}
+                </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4 pt-2">
+                <div className="flex items-center gap-2 bg-charcoal-950/40 p-3 rounded-lg border border-white/5">
+                    <button
+                        type="button"
+                        onClick={() => setIsHalf(!isHalf)}
+                        className={clsx(
+                            "w-4 h-4 rounded border flex items-center justify-center transition-colors shrink-0",
+                            isHalf ? "bg-ember-500 border-ember-500" : "border-charcoal-500"
+                        )}
+                    >
+                        {isHalf && <Check className="w-3 h-3 text-white" />}
+                    </button>
+                    <div>
+                        <p className="text-xs font-bold text-white">Grupo Paga Meia</p>
+                        <p className="text-[10px] text-charcoal-500 leading-tight">Peso 0.5 na divisão</p>
+                    </div>
+                </div>
+
+                <div>
+                    <label className="block text-xxs font-semibold text-charcoal-400 mb-1 uppercase tracking-wider">Priorizar pagamento para</label>
+                    <select
+                        value={preferredRecipient}
+                        onChange={(e) => setPreferredRecipient(e.target.value)}
+                        className="w-full bg-charcoal-950 border border-charcoal-700 rounded-lg px-2.5 py-2 text-xs text-white focus:outline-none focus:border-ember-500 transition-all appearance-none animate-none"
+                    >
+                        <option value="">Ninguém (Distribuição normal)</option>
+                        {participants.map(p => (
+                            <option key={p.name} value={p.name}>{p.name}</option>
+                        ))}
+                    </select>
+                </div>
+            </div>
+
+            <div className="pt-2 border-t border-white/5 flex gap-2 justify-end">
+                <button
+                    onClick={onCancel}
+                    className="px-3 py-1.5 rounded-lg text-xs font-semibold text-charcoal-400 hover:text-white hover:bg-white/5 transition-colors"
+                >
+                    Cancelar
+                </button>
+                <button
+                    disabled={!name.trim()}
+                    onClick={handleSave}
+                    className="bg-ember-600 hover:bg-ember-500 disabled:opacity-50 text-white px-4 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-md shadow-ember-900/20"
+                >
+                    Salvar Alterações
+                </button>
             </div>
         </div>
     );

@@ -27,3 +27,5 @@ dist-ssr
 service-account.json
 src/config/credentials.ts
 .env
+
+.vercel
