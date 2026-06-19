@@ -121,9 +121,6 @@ export function ParticipantCard({
                             <GripVertical className="w-4 h-4" />
                         </div>
                     )}
-                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-ember-500 to-orange-600 flex items-center justify-center text-white font-bold text-xs shadow-lg shadow-ember-900/20 shrink-0">
-                        {participant.name.charAt(0)}
-                    </div>
                     <div className="min-w-0">
                         <div className="flex items-center gap-1.5">
                             <h3 className="font-bold text-base text-white leading-tight truncate">{participant.name}</h3>
